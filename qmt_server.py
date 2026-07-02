@@ -1,5 +1,5 @@
-# -*- coding: gbk -*-
-# author公众号：可转债量化分析
+#encoding:gbk
+
 import json
 import locale
 from tornado.web import Application, RequestHandler, HTTPError
@@ -24,6 +24,68 @@ def safe_call(func, *args, **kwargs):
     except Exception as e:
         logger.error(f"{func.__name__} 调用失败: {e}")
         return None
+
+
+# ============= 订阅数据缓存 =============
+_sub_tick_cache = {}       # subscribe_whole_quote 回调缓存 {code: {field: val, ...}}
+_sub_quote_cache = {}      # subscribe_quote 回调缓存 {sub_id: {timetag, open, ...}}
+
+
+def _whole_quote_callback(data):
+    """subscribe_whole_quote 的回调，将推送数据存入缓存"""
+    try:
+        if isinstance(data, dict):
+            for code, tick in data.items():
+                if hasattr(tick, '__dict__'):
+                    attrs = {}
+                    for attr in dir(tick):
+                        if not attr.startswith('_'):
+                            try:
+                                val = getattr(tick, attr)
+                                if not callable(val):
+                                    attrs[attr] = val
+                            except Exception:
+                                pass
+                    _sub_tick_cache[code] = attrs
+                elif isinstance(tick, dict):
+                    _sub_tick_cache[code] = tick
+                else:
+                    _sub_tick_cache[code] = str(tick)
+        elif hasattr(data, '__dict__'):
+            attrs = {}
+            for attr in dir(data):
+                if not attr.startswith('_'):
+                    try:
+                        val = getattr(data, attr)
+                        if not callable(val):
+                            attrs[attr] = val
+                    except Exception:
+                        pass
+            code = attrs.get('sInstrumentID', attrs.get('stockcode', ''))
+            if code:
+                _sub_tick_cache[code] = attrs
+    except Exception as e:
+        logger.error(f"whole_quote_callback 异常: {e}")
+
+
+def _quote_callback(data):
+    """subscribe_quote 的回调，将推送数据存入缓存"""
+    try:
+        if hasattr(data, '__dict__'):
+            attrs = {}
+            for attr in dir(data):
+                if not attr.startswith('_'):
+                    try:
+                        val = getattr(data, attr)
+                        if not callable(val):
+                            attrs[attr] = val
+                    except Exception:
+                        pass
+            _sub_quote_cache[str(attrs.get('sInstrumentID', len(_sub_quote_cache)))] = attrs
+        elif isinstance(data, dict):
+            _sub_quote_cache[str(len(_sub_quote_cache))] = data
+    except Exception as e:
+        logger.error(f"quote_callback 异常: {e}")
 
 
 # ============= BaseHandler =============
@@ -109,6 +171,16 @@ class ContextCapitalHandler(BaseHandler):
 class ContextUniverseHandler(BaseHandler):
     def get(self):
         self.write(json.dumps({"universe": self.ctx().get_universe()}, ensure_ascii=False))
+
+# ContextInfo.start - 获取回测开始时间
+class ContextStartHandler(BaseHandler):
+    def get(self):
+        self.write(json.dumps({"start": self.ctx().start}, ensure_ascii=False))
+
+# ContextInfo.end - 获取回测结束时间
+class ContextEndHandler(BaseHandler):
+    def get(self):
+        self.write(json.dumps({"end": self.ctx().end}, ensure_ascii=False))
 
 
 # ============= 2. 数据查询 (ContextInfo get_*) =============
@@ -576,14 +648,14 @@ class LocalDataHandler(BaseHandler):
             raise HTTPError(500, "获取本地行情失败")
         self.write(json.dumps({"data": ret}, ensure_ascii=False, default=str))
 
-# ContextInfo.subscribe_quote() - 订阅行情数据
+# ContextInfo.subscribe_quote() - 订阅行情数据（带回调缓存）
 class SubscribeQuoteHandler(BaseHandler):
     def post(self):
         data = json.loads(self.request.body)
         stock_code = data.get('stock_code', '')
         period = data.get('period', 'follow')
         dividend_type = data.get('dividend_type', 'follow')
-        ret = safe_call(self.ctx().subscribe_quote, stock_code, period, dividend_type)
+        ret = safe_call(self.ctx().subscribe_quote, stock_code, period, dividend_type, '', _quote_callback)
         self.write(json.dumps({"status": "success" if ret is not None else "failed", "sub_id": ret}, ensure_ascii=False))
 
 # ContextInfo.unsubscribe_quote() - 反订阅行情数据
@@ -593,6 +665,94 @@ class UnsubscribeQuoteHandler(BaseHandler):
         sub_id = int(data.get('sub_id', '0'))
         safe_call(self.ctx().unsubscribe_quote, sub_id)
         self.write(json.dumps({"status": "success", "sub_id": sub_id}, ensure_ascii=False))
+
+# ContextInfo.get_close_price() - 获取指定时间的收盘价
+class ClosePriceHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        stockcode = data.get('stockcode', '')
+        period = data.get('period', '1d')
+        timetag = int(data.get('timetag', '0'))
+        ret = safe_call(self.ctx().get_close_price, stockcode, period, timetag)
+        self.write(json.dumps({"stockcode": stockcode, "period": period, "timetag": timetag, "close_price": ret}, ensure_ascii=False))
+
+# ContextInfo.get_close_price_by_date() - 获取指定日期的收盘价
+class ClosePriceByDateHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        stockcode = data.get('stockcode', '')
+        period = data.get('period', '1d')
+        strdate = data.get('strdate', '')
+        ret = safe_call(self.ctx().get_close_price_by_date, stockcode, period, strdate)
+        self.write(json.dumps({"stockcode": stockcode, "period": period, "strdate": strdate, "close_price": ret}, ensure_ascii=False))
+
+# ContextInfo.subscribe_whole_quote() - 订阅全推行情（带回调缓存）
+class SubscribeWholeQuoteHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        code_list = data.get('code_list', '')
+        if not code_list:
+            raise HTTPError(400, "need args code_list")
+        codes = [s.strip() for s in code_list.split(',')]
+        ret = safe_call(self.ctx().subscribe_whole_quote, codes, _whole_quote_callback)
+        self.write(json.dumps({"status": "success" if ret is not None else "failed", "sub_id": ret}, ensure_ascii=False))
+
+# 获取订阅缓存的全推行情数据
+class SubTickCacheHandler(BaseHandler):
+    def get(self):
+        self.write(json.dumps({"data": _sub_tick_cache}, ensure_ascii=False, default=str))
+
+# 获取订阅缓存的行情数据
+class SubQuoteCacheHandler(BaseHandler):
+    def get(self):
+        self.write(json.dumps({"data": _sub_quote_cache}, ensure_ascii=False, default=str))
+
+# ContextInfo.set_universe() - 设置股票池
+class SetUniverseHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        stock_list = data.get('stock_list', '')
+        if not stock_list:
+            raise HTTPError(400, "need args stock_list")
+        stocks = [s.strip() for s in stock_list.split(',')]
+        safe_call(self.ctx().set_universe, stocks)
+        self.write(json.dumps({"status": "success", "stock_list": stocks}, ensure_ascii=False))
+
+# ContextInfo.set_account() - 设置账号
+class SetAccountHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        accountid = data.get('accountid', '')
+        if not accountid:
+            raise HTTPError(400, "need args accountid")
+        safe_call(self.ctx().set_account, accountid)
+        self.write(json.dumps({"status": "success", "accountid": accountid}, ensure_ascii=False))
+
+# download_history_data() - 下载历史数据到本地
+class DownloadHistoryDataHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        stockcode = data.get('stockcode', '')
+        period = data.get('period', '1d')
+        start_time = data.get('start_time', '')
+        end_time = data.get('end_time', '')
+        if not stockcode:
+            raise HTTPError(400, "need args stockcode")
+        ret = safe_call(download_history_data, stockcode, period, start_time, end_time)
+        self.write(json.dumps({"status": "success", "stockcode": stockcode, "result": ret}, ensure_ascii=False))
+
+# ContextInfo.set_output_index_property() - 设置指标输出属性
+class SetOutputIndexPropertyHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        index_name = data.get('index_name', '')
+        draw_style = int(data.get('draw_style', '0'))
+        color = data.get('color', 'white')
+        noaxis = data.get('noaxis', False)
+        nodraw = data.get('nodraw', False)
+        noshow = data.get('noshow', False)
+        safe_call(self.ctx().set_output_index_property, index_name, draw_style, color, noaxis, nodraw, noshow)
+        self.write(json.dumps({"status": "success", "index_name": index_name}, ensure_ascii=False))
 
 
 # ============= 3. 判定函数 (is_*) =============
@@ -1046,6 +1206,57 @@ class NewPurchaseLimitHandler(BaseHandler):
         ret = safe_call(get_new_purchase_limit, accid)
         self.write(json.dumps({"data": ret or {}}, ensure_ascii=False, default=str))
 
+# cancel() - 单笔撤单
+class CancelOrderHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            orderId = data.get('orderId', '')
+            accountType = data.get('accountType', 'stock')
+            if not orderId:
+                raise HTTPError(400, "need args orderId")
+            cancel(orderId, self.acc(), accountType, self.ctx())
+            self.write(json.dumps({"status": "success", "orderId": orderId}, ensure_ascii=False))
+        except Exception as e:
+            logger.exception("cancel异常")
+            raise HTTPError(400, f"撤单失败: {str(e)}")
+
+# get_smart_algo_param() - 获取智能算法参数
+class SmartAlgoParamHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        algo_list = data.get('algoList', '')
+        if isinstance(algo_list, str):
+            algos = [s.strip() for s in algo_list.split(',')] if algo_list else []
+        else:
+            algos = algo_list
+        ret = safe_call(get_smart_algo_param, algos)
+        if hasattr(ret, 'to_dict'):
+            ret = ret.to_dict()
+        self.write(json.dumps({"data": ret} if ret is not None else {"error": "获取智能算法参数失败"}, ensure_ascii=False, default=str))
+
+# query_credit_account() - 查询两融账户（异步触发）
+class QueryCreditAccountHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        accid = data.get('accid', self.acc())
+        seq = int(data.get('seq', '0'))
+        ret = safe_call(query_credit_account, accid, seq)
+        self.write(json.dumps({"status": "submitted", "accid": accid, "seq": seq, "result": str(ret) if ret else "async"}, ensure_ascii=False))
+
+# query_credit_opvolume() - 查询两融最大可下单量（异步触发）
+class QueryCreditOpvolumeHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        accid = data.get('accid', self.acc())
+        seq = int(data.get('seq', '0'))
+        optype = data.get('optype', '')
+        code = data.get('code', '')
+        price = float(data.get('price', '0'))
+        volume = int(data.get('volume', '0'))
+        ret = safe_call(query_credit_opvolume, accid, seq, optype, code, price, volume)
+        self.write(json.dumps({"status": "submitted", "accid": accid, "seq": seq, "result": str(ret) if ret else "async"}, ensure_ascii=False))
+
 
 # ============= 8. 引用函数 (ext_data) =============
 # ext_data() - 获取扩展数据数值
@@ -1087,6 +1298,100 @@ class GetFactorRankHandler(BaseHandler):
         deviation = int(data.get('deviation', '0'))
         ret = safe_call(get_factor_rank, factorname, stockcode, deviation, self.ctx())
         self.write(json.dumps({"factorname": factorname, "stockcode": stockcode, "rank": ret}, ensure_ascii=False))
+
+# ext_data_rank_range() - 获取扩展数据排名范围
+class ExtDataRankRangeHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        extdataname = data.get('extdataname', '')
+        stockcode = data.get('stockcode', '')
+        begintime = data.get('begintime', '')
+        endtime = data.get('endtime', '')
+        ret = safe_call(ext_data_rank_range, extdataname, stockcode, begintime, endtime, self.ctx())
+        if hasattr(ret, 'to_dict'):
+            ret = ret.to_dict()
+        self.write(json.dumps({"extdataname": extdataname, "stockcode": stockcode, "data": ret}, ensure_ascii=False, default=str))
+
+# ext_data_range() - 获取扩展数据值范围
+class ExtDataRangeHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        extdataname = data.get('extdataname', '')
+        stockcode = data.get('stockcode', '')
+        begintime = data.get('begintime', '')
+        endtime = data.get('endtime', '')
+        ret = safe_call(ext_data_range, extdataname, stockcode, begintime, endtime, self.ctx())
+        if hasattr(ret, 'to_dict'):
+            ret = ret.to_dict()
+        self.write(json.dumps({"extdataname": extdataname, "stockcode": stockcode, "data": ret}, ensure_ascii=False, default=str))
+
+
+# ============= 8.5 板块管理 =============
+# create_sector() - 创建板块
+class CreateSectorHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        parent_node = data.get('parent_node', '')
+        sector_name = data.get('sector_name', '')
+        overwrite = data.get('overwrite', 'true').lower() == 'true'
+        if not sector_name:
+            raise HTTPError(400, "need args sector_name")
+        ret = safe_call(create_sector, parent_node, sector_name, overwrite)
+        self.write(json.dumps({"status": "success", "sector_name": sector_name, "result": ret}, ensure_ascii=False))
+
+# create_sector_folder() - 创建板块文件夹
+class CreateSectorFolderHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        parent_node = data.get('parent_node', '')
+        folder_name = data.get('folder_name', '')
+        overwrite = data.get('overwrite', 'true').lower() == 'true'
+        if not folder_name:
+            raise HTTPError(400, "need args folder_name")
+        ret = safe_call(create_sector_folder, parent_node, folder_name, overwrite)
+        self.write(json.dumps({"status": "success", "folder_name": folder_name, "result": ret}, ensure_ascii=False))
+
+# get_sector_list() - 获取板块目录
+class SectorListHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        node = data.get('node', '')
+        ret = safe_call(get_sector_list, node)
+        self.write(json.dumps({"node": node, "data": ret or []}, ensure_ascii=False, default=str))
+
+# reset_sector_stock_list() - 重置板块成分股
+class ResetSectorStockListHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        sector = data.get('sector', '')
+        stock_list = data.get('stock_list', '')
+        if not sector:
+            raise HTTPError(400, "need args sector")
+        stocks = [s.strip() for s in stock_list.split(',')] if stock_list else []
+        ret = safe_call(reset_sector_stock_list, sector, stocks)
+        self.write(json.dumps({"status": "success" if ret else "failed", "sector": sector}, ensure_ascii=False))
+
+# add_stock_to_sector() - 添加股票到板块
+class AddStockToSectorHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        sector = data.get('sector', '')
+        stock_code = data.get('stock_code', '')
+        if not sector or not stock_code:
+            raise HTTPError(400, "need args sector and stock_code")
+        ret = safe_call(add_stock_to_sector, sector, stock_code)
+        self.write(json.dumps({"status": "success" if ret else "failed", "sector": sector, "stock_code": stock_code}, ensure_ascii=False))
+
+# remove_stock_from_sector() - 从板块移除股票
+class RemoveStockFromSectorHandler(BaseHandler):
+    def post(self):
+        data = json.loads(self.request.body)
+        sector = data.get('sector', '')
+        stock_code = data.get('stock_code', '')
+        if not sector or not stock_code:
+            raise HTTPError(400, "need args sector and stock_code")
+        ret = safe_call(remove_stock_from_sector, sector, stock_code)
+        self.write(json.dumps({"status": "success" if ret else "failed", "sector": sector, "stock_code": stock_code}, ensure_ascii=False))
 
 
 # ============= 9. 原有 Handler（保持兼容） =============
@@ -1322,6 +1627,8 @@ def make_app():
         (r"/api/context/benchmark", ContextBenchmarkHandler),
         (r"/api/context/capital", ContextCapitalHandler),
         (r"/api/context/universe", ContextUniverseHandler),
+        (r"/api/context/start", ContextStartHandler),
+        (r"/api/context/end", ContextEndHandler),
 
         # 数据查询
         (r"/api/data/stock_name", StockNameHandler),
@@ -1367,10 +1674,21 @@ def make_app():
         (r"/api/data/bsm_price", BsmPriceHandler),
         (r"/api/data/bsm_iv", BsmIvHandler),
         (r"/api/data/local_data", LocalDataHandler),
+        (r"/api/data/close_price", ClosePriceHandler),
+        (r"/api/data/close_price_by_date", ClosePriceByDateHandler),
+        (r"/api/data/download_history_data", DownloadHistoryDataHandler),
 
         # 订阅
         (r"/api/data/subscribe_quote", SubscribeQuoteHandler),
         (r"/api/data/unsubscribe_quote", UnsubscribeQuoteHandler),
+        (r"/api/data/subscribe_whole_quote", SubscribeWholeQuoteHandler),
+        (r"/api/data/sub_tick_cache", SubTickCacheHandler),
+        (r"/api/data/sub_quote_cache", SubQuoteCacheHandler),
+
+        # ContextInfo 设置
+        (r"/api/context/set_universe", SetUniverseHandler),
+        (r"/api/context/set_account", SetAccountHandler),
+        (r"/api/context/set_output_index_property", SetOutputIndexPropertyHandler),
 
         # 判定函数
         (r"/api/check/is_last_bar", IsLastBarHandler),
@@ -1415,12 +1733,26 @@ def make_app():
         (r"/api/trade/enable_short_contract", EnableShortContractHandler),
         (r"/api/trade/ipo_data", IpoDataHandler),
         (r"/api/trade/new_purchase_limit", NewPurchaseLimitHandler),
+        (r"/api/trade/cancel", CancelOrderHandler),
+        (r"/api/trade/smart_algo_param", SmartAlgoParamHandler),
+        (r"/api/trade/query_credit_account", QueryCreditAccountHandler),
+        (r"/api/trade/query_credit_opvolume", QueryCreditOpvolumeHandler),
 
         # 引用函数
         (r"/api/ext/ext_data", ExtDataHandler),
         (r"/api/ext/ext_data_rank", ExtDataRankHandler),
         (r"/api/ext/get_factor_value", GetFactorValueHandler),
         (r"/api/ext/get_factor_rank", GetFactorRankHandler),
+        (r"/api/ext/ext_data_rank_range", ExtDataRankRangeHandler),
+        (r"/api/ext/ext_data_range", ExtDataRangeHandler),
+
+        # 板块管理
+        (r"/api/sector/create", CreateSectorHandler),
+        (r"/api/sector/create_folder", CreateSectorFolderHandler),
+        (r"/api/sector/list", SectorListHandler),
+        (r"/api/sector/reset_stocks", ResetSectorStockListHandler),
+        (r"/api/sector/add_stock", AddStockToSectorHandler),
+        (r"/api/sector/remove_stock", RemoveStockFromSectorHandler),
 
         # 系统
         (r"/api/sys/python_version", PythonVersionHandler),
