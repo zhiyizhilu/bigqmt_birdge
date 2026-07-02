@@ -14,16 +14,30 @@ class QMTClient:
         self.session.headers.update({"X-Token": TOKEN})
 
     def _req(self, method, path, **kwargs):
-        url = f"{self.base}{path}"
+        url = "{}{}".format(self.base, path)
         try:
             resp = self.session.request(method, url, timeout=10, **kwargs)
-            resp.raise_for_status()
-            return resp.json()
+            # 先尝试解析JSON（即使status_code非200，服务端write_error也返回JSON）
+            try:
+                result = resp.json()
+                if resp.status_code >= 400 and isinstance(result, dict):
+                    result["status_code"] = resp.status_code
+                return result
+            except ValueError as je:
+                # JSON解析失败，可能是HTML错误页面
+                if resp.status_code >= 400:
+                    return {"error": "HTTP {} - {}".format(resp.status_code, resp.text[:200]), "status_code": resp.status_code}
+                print("  [DEBUG] JSON解析失败, path={}, status={}, body={}".format(
+                    path, resp.status_code, resp.text[:300]))
+                return {"error": "JSON解析失败: {}".format(str(je)), "status_code": resp.status_code, "raw_body": resp.text[:500]}
         except requests.RequestException as e:
-            return {"error": str(e), "status_code": getattr(e.response, 'status_code', 500)}
+            resp_text = ''
+            if hasattr(e, 'response') and e.response is not None:
+                resp_text = e.response.text[:300]
+            return {"error": str(e), "status_code": getattr(e.response, 'status_code', 500), "raw_body": resp_text}
 
     def get_holding(self, account='stock'):
-        return self._req('GET', f'/api/holding?account={account}')
+        return self._req('POST', f'/api/holding', json={"account": account})
 
     def get_total_money(self, account='stock'):
         return self._req('POST', f'/api/money/total', json={"account": account})
@@ -98,9 +112,14 @@ class QMTClient:
         return self._req('POST', f'/api/data/full_tick', json={
             "stocks": stocks})
 
-    def get_market_data_ex(self, stocks: list[str]):
-        return self._req('POST', f'/api/data/market_data_ex', json={
-            "stocks": stocks})
+    def get_market_data_ex(self, stock_code, fields='', period='follow', start_time='', end_time='', count=-1, dividend_type='follow'):
+        stock_str = ','.join(stock_code) if isinstance(stock_code, list) else stock_code
+        fields_str = ','.join(fields) if isinstance(fields, list) else fields
+        return self._req('POST', '/api/data/market_data_ex', json={
+            "stock_code": stock_str, "fields": fields_str, "period": period,
+            "start_time": start_time, "end_time": end_time, "count": count,
+            "dividend_type": dividend_type
+        })
 
     def get_order_status(self, account='stock'):
         """
@@ -120,9 +139,7 @@ class QMTClient:
         ENTRUST_STATUS_UNKNOWN: 255 //未知
         :return:
         """
-        params = {"account": account}
-        query = "&".join([f"{k}={v}"for k, v in params.items()])
-        return self._req('GET', f'/api/order/status?{query}')
+        return self._req('POST', f'/api/order/status', json={"account": account})
 
     def cancel_all_orders(self, account='stock'):
         """
@@ -241,10 +258,11 @@ class QMTClient:
     def get_date_location(self, strdate):
         return self._req('POST', '/api/data/date_location', json={"strdate": strdate})
 
-    def get_history_data(self, length=10, period='1d', field='close', dividend_type=0, skip_paused=True):
+    def get_history_data(self, length=10, period='1d', field='close', dividend_type=0, skip_paused=True, stock_list=''):
         return self._req('POST', '/api/data/history_data', json={
             "len": length, "period": period, "field": field,
-            "dividend_type": dividend_type, "skip_paused": skip_paused
+            "dividend_type": dividend_type, "skip_paused": skip_paused,
+            "stock_list": stock_list
         })
 
     def get_market_data(self, fields='', stock_code='', start_time='', end_time='',
@@ -450,14 +468,19 @@ class QMTClient:
             "userOrderId": userOrderId, "userOrderParam": userOrderParam or {}
         })
 
-    def smart_algo_passorder(self, opType, orderType=1101, stock='', prType=-1, price=0, volume=0,
+    def smart_algo_passorder(self, opType, orderType=1101, stock='', prType=11, price=0, volume=0,
+                             strageName='', quickTrade=2, userid='',
                              smartAlgoType='', limitOverRate=0, minAmountPerOrder=0,
-                             startTime='', endTime=''):
+                             targetPriceLevel=0, startTime='', endTime='', limitControl=0):
         return self._req('POST', '/api/trade/smart_algo_passorder', json={
             "opType": opType, "orderType": orderType, "stock": stock,
             "prType": prType, "price": price, "volume": volume,
+            "strageName": strageName, "quickTrade": quickTrade, "userid": userid,
             "smartAlgoType": smartAlgoType, "limitOverRate": limitOverRate,
-            "minAmountPerOrder": minAmountPerOrder, "startTime": startTime, "endTime": endTime
+            "minAmountPerOrder": minAmountPerOrder,
+            "targetPriceLevel": targetPriceLevel,
+            "startTime": startTime, "endTime": endTime,
+            "limitControl": limitControl
         })
 
     def order_lots(self, stock, lots, style='LATEST', price=0, accId=''):
