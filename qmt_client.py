@@ -258,7 +258,7 @@ class QMTClient:
     def get_date_location(self, strdate):
         return self._req('POST', '/api/data/date_location', json={"strdate": strdate})
 
-    def get_history_data(self, length=10, period='1d', field='close', dividend_type=0, skip_paused=True, stock_list=''):
+    def get_history_data(self, length=10, period='1d', field='close', dividend_type='none', skip_paused=True, stock_list=''):
         return self._req('POST', '/api/data/history_data', json={
             "len": length, "period": period, "field": field,
             "dividend_type": dividend_type, "skip_paused": skip_paused,

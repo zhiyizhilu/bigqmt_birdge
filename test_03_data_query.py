@@ -14,13 +14,25 @@ setup_logging("test_03_data_query")
 client = QMTClient()
 results = {"pass": [], "fail": [], "skip": []}
 
-# 先下载历史数据
+# 先下载历史数据（覆盖足够长时间范围，确保后续接口有数据可用）
+# download_history_data是异步的，需要等待数据写入本地
 print("\n========== 下载历史数据 ==========")
-assert_test(results, "download_history_data", lambda: client.download_history_data(TEST_ETF), [
+assert_test(results, "download_history_data(ETF)", lambda: client.download_history_data(TEST_ETF, start_time="20240101", end_time="20261231"), [
     (("result",), lambda v: v is True, "下载结果为True"),
 ])
-assert_test(results, "download_history_data(财务)", lambda: client.download_history_data(FINANCE_STOCK))
-time.sleep(2)
+assert_test(results, "download_history_data(财务)", lambda: client.download_history_data(FINANCE_STOCK, start_time="20240101", end_time="20261231"))
+assert_test(results, "download_history_data(沪深300)", lambda: client.download_history_data("000300.SH", start_time="20240101", end_time="20261231"))
+print("  等待数据下载写入本地...")
+time.sleep(5)
+
+# 验证数据是否可用（用get_local_data确认数据已下载完成）
+print("\n========== 验证下载数据 ==========")
+verify_data = client.get_local_data(TEST_ETF, "20250101", "20250601")
+has_data = isinstance(verify_data, dict) and verify_data.get("data") not in [None, {}, ""]
+print("  数据验证: {}".format("OK" if has_data else "数据可能未就绪"))
+if not has_data:
+    print("  额外等待5秒...")
+    time.sleep(5)
 
 # 行情数据
 print("\n========== 行情数据 ==========")
@@ -72,14 +84,15 @@ assert_test(results, "get_etf_iopv", lambda: client.get_etf_iopv("510050.SH"), [
     (("iopv",), lambda v: v is not None and v > 0, "IOPV>0"),
 ])
 
-# 财务数据
+# 财务数据（字段格式: 表名.字段名，如 ASHAREINCOME.net_profit_incl_min_int_inc）
 print("\n========== 财务数据 ==========")
 assert_test(results, "get_financial_data", lambda: client.get_financial_data(
-    "Balance,Income,CashFlow", FINANCE_STOCK, "20240101", "20241231"), [
+    "ASHAREINCOME.net_profit_incl_min_int_inc,CAPITALSTRUCTURE.total_capital,PERSHAREINDEX.s_fa_eps_basic",
+    FINANCE_STOCK, "20240101", "20241231"), [
     (("data",), lambda v: v is not None and v != {} and v != 0, "财务数据非空"),
 ])
-assert_test(results, "get_trading_dates", lambda: client.get_trading_dates(TEST_STOCK, "20250101", "20250131", count=30), [
-    (("dates",), lambda v: isinstance(v, list), "交易日列表返回列表类型"),
+assert_test(results, "get_trading_dates", lambda: client.get_trading_dates("000300.SH", "20250101", "20250630", count=100), [
+    (("dates",), lambda v: isinstance(v, list) and len(v) > 0, "交易日列表非空"),
 ])
 assert_test(results, "get_turnover_rate", lambda: client.get_turnover_rate([TEST_STOCK], "20250601", "20250630"))
 
@@ -93,7 +106,7 @@ assert_test(results, "get_weight_in_index", lambda: client.get_weight_in_index(T
 assert_test(results, "get_contract_multiplier", lambda: client.get_contract_multiplier("IF"))
 assert_test(results, "get_risk_free_rate", lambda: client.get_risk_free_rate(0))
 assert_test(results, "get_date_location", lambda: client.get_date_location("20250101"))
-assert_test(results, "get_history_data", lambda: client.get_history_data(5, "1d", "close", stock_list=TEST_STOCK), [
+assert_test(results, "get_history_data", lambda: client.get_history_data(5, "1d", "close", stock_list=TEST_ETF), [
     (("data",), lambda v: v is not None and v != {} and len(v) > 0, "历史数据非空"),
 ])
 assert_test(results, "get_divid_factors", lambda: client.get_divid_factors(TEST_ETF))
@@ -106,6 +119,8 @@ assert_test(results, "get_etf_info", lambda: client.get_etf_info("510050.SH"))
 assert_test(results, "get_contract_expire_date", lambda: client.get_contract_expire_date("IF2501"))
 assert_test(results, "get_option_undl_data", lambda: client.get_option_undl_data("510050"))
 assert_test(results, "get_factor_data", lambda: client.get_factor_data("a", TEST_STOCK, "20240101", "20241231"))
+# 注意: get_factor_data/get_factor_value 依赖handlebar上下文，HTTP handler中无法调用
+# 如需使用，请在QMT策略的handlebar回调中直接调用
 assert_test(results, "get_his_st_data", lambda: client.get_his_st_data(TEST_STOCK))
 assert_test(results, "get_his_index_data", lambda: client.get_his_index_data(TEST_INDEX))
 assert_test(results, "get_all_subscription", lambda: client.get_all_subscription())
