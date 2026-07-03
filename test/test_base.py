@@ -8,12 +8,15 @@ import sys
 import os
 import time
 from datetime import datetime
+
+# 将项目根目录加入sys.path，以便import qmt_client
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from qmt_client import QMTClient
 
 # ============================================================
 # 日志输出到文件+控制台
 # ============================================================
-LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "log")
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "log")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 
