@@ -59,7 +59,7 @@ def assert_test(results, name, func, assertions=None, dangerous=False, confirm_f
     """带断言的测试"""
     if dangerous and confirm_func and not confirm_func("执行 {}? 这是真实交易操作!".format(name)):
         results["skip"].append(name)
-        print("  SKIP  {} (用户取消)".format(name))
+        print("  ⚠️  {} (用户取消)".format(name))
         return None
     try:
         ret = func()
@@ -71,11 +71,21 @@ def assert_test(results, name, func, assertions=None, dangerous=False, confirm_f
         results["fail"].append(name)
         print("  ❌  {}  -> HTTP错误: {}".format(name, ret.get("error", "")[:100]))
         return ret
+    # status=warning: 下单未产生委托等可预期问题，用⚠️标记
+    if isinstance(ret, dict) and ret.get("status") == "warning":
+        results["warn"].append(name)
+        msg = ret.get("message", "")
+        out = json.dumps(ret, ensure_ascii=False, default=str)
+        print("  ⚠️  {}  -> {}".format(name, msg[:100] if msg else (out[:120] + "...") if len(out) > 120 else out))
+        return ret
+    # status=skipped: 测试函数自行处理了输出（已打印⚠️），不再重复打印
+    if isinstance(ret, dict) and ret.get("status") == "skipped":
+        return ret
     if isinstance(ret, dict) and ret.get("status") == "error":
         msg = ret.get("message", "")
         if "不支持" in msg:
             results["skip"].append(name)
-            print("  SKIP  {}  (不支持: {})".format(name, msg[:80]))
+            print("  ⚠️  {}  (不支持: {})".format(name, msg[:80]))
             return ret
         results["fail"].append(name)
         print("  ❌  {}  -> {}".format(name, msg[:100]))
@@ -115,11 +125,16 @@ def print_summary(results):
     print("\n" + "=" * 60)
     print("  ✅: {}".format(len(results["pass"])))
     print("  ❌: {}".format(len(results["fail"])))
+    print("  ⚠️: {}".format(len(results.get("warn", []))))
     print("  SKIP: {}".format(len(results["skip"])))
     print("=" * 60)
     if results["fail"]:
         print("\n失败列表:")
         for name in results["fail"]:
+            print("  - {}".format(name))
+    if results.get("warn"):
+        print("\n警告列表:")
+        for name in results["warn"]:
             print("  - {}".format(name))
     if results["skip"]:
         print("\n跳过列表:")

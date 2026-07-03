@@ -2,11 +2,12 @@
 """
 一键运行全部测试
 用法:
-  python run_all_tests.py           # 运行数据测试(01-07)
-  python run_all_tests.py --all     # 运行全部测试(01-13, 含交易)
-  python run_all_tests.py --trade   # 只运行交易测试(10-13)
+  python run_all_tests.py           # 运行数据测试(01-11)
+  python run_all_tests.py --all     # 运行全部测试(01-11+20, 含交易)
+  python run_all_tests.py --trade   # 只运行交易测试(20)
   python run_all_tests.py --yes     # 交易测试自动确认
   python run_all_tests.py 3 5       # 只运行test_03和test_05
+  python run_all_tests.py 20        # 只运行test_20(交易测试)
 """
 import subprocess
 import sys
@@ -16,22 +17,29 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # 数据测试文件
 DATA_TESTS = [
-    "test_01_compat.py",
+    "test_01_system.py",
     "test_02_context.py",
-    "test_03_data_query.py",
-    "test_04_subscribe.py",
-    "test_05_judge.py",
-    "test_06_account.py",
-    "test_07_ext_func.py",
+    "test_03_quote.py",
+    "test_04_history.py",
+    "test_05_finance.py",
+    "test_06_derivative.py",
+    "test_07_cross_border.py",
+    "test_08_judge.py",
+    "test_09_account.py",
+    "test_10_subscribe.py",
+    "test_11_ext.py",
 ]
 
 # 交易测试文件
 TRADE_TESTS = [
-    "test_10_trade_pending.py",
-    "test_11_trade_fill.py",
-    "test_12_trade_order_api.py",
-    "test_13_trade_future.py",
+    "test_20_trade.py",
 ]
+
+# 编号→文件名映射
+NUM_MAP = {}
+for i, fname in enumerate(DATA_TESTS, 1):
+    NUM_MAP[i] = fname
+NUM_MAP[20] = TRADE_TESTS[0]
 
 
 def run_test(script, extra_args=None):
@@ -68,14 +76,12 @@ def main():
 
     if specific_nums:
         # 运行指定编号的测试
-        all_tests = DATA_TESTS + TRADE_TESTS
         selected = []
         for n in specific_nums:
-            idx = n - 1
-            if 0 <= idx < len(all_tests):
-                selected.append(all_tests[idx])
+            if n in NUM_MAP:
+                selected.append(NUM_MAP[n])
             else:
-                print("  警告: 测试编号{}超出范围(1-{})".format(n, len(all_tests)))
+                print("  警告: 测试编号{}不在有效范围(1-11, 20)".format(n))
         if not selected:
             print("  无有效测试编号")
             sys.exit(1)

@@ -17,14 +17,14 @@ class QMTClient:
         url = "{}{}".format(self.base, path)
         try:
             resp = self.session.request(method, url, timeout=10, **kwargs)
-            # 先尝试解析JSON（即使status_code非200，服务端write_error也返回JSON）
+            # 强制用utf-8解码，避免Windows下requests默认用ISO-8859-1导致中文乱码
+            resp.encoding = 'utf-8'
             try:
                 result = resp.json()
                 if resp.status_code >= 400 and isinstance(result, dict):
                     result["status_code"] = resp.status_code
                 return result
             except ValueError as je:
-                # JSON解析失败，可能是HTML错误页面
                 if resp.status_code >= 400:
                     return {"error": "HTTP {} - {}".format(resp.status_code, resp.text[:200]), "status_code": resp.status_code}
                 print("  [DEBUG] JSON解析失败, path={}, status={}, body={}".format(
@@ -681,6 +681,130 @@ class QMTClient:
     def remove_stock_from_sector(self, sector, stock_code):
         return self._req('POST', '/api/sector/remove_stock', json={
             "sector": sector, "stock_code": stock_code
+        })
+
+    # ============= 新增数据接口 =============
+    def get_commission(self):
+        return self._req('POST', '/api/data/commission')
+
+    def get_slippage(self):
+        return self._req('POST', '/api/data/slippage')
+
+    def set_commission(self, comtype, com='none'):
+        return self._req('POST', '/api/context/set_commission', json={
+            "comtype": comtype, "com": com
+        })
+
+    def set_slippage(self, b_flag, slippage='none'):
+        return self._req('POST', '/api/context/set_slippage', json={
+            "b_flag": b_flag, "slippage": slippage
+        })
+
+    def get_net_value(self, barpositon=0):
+        return self._req('POST', '/api/data/net_value', json={"barpositon": barpositon})
+
+    def get_raw_financial_data(self, field_list, stock_list, start_date, end_date, report_type='report_time', data_type='dict'):
+        return self._req('POST', '/api/data/raw_financial_data', json={
+            "fieldList": field_list, "stockList": stock_list,
+            "startDate": start_date, "endDate": end_date,
+            "report_type": report_type, "data_type": data_type
+        })
+
+    def get_north_finance_change(self, period):
+        return self._req('POST', '/api/data/north_finance_change', json={"period": period})
+
+    def get_hkt_exchange_rate(self):
+        return self._req('POST', '/api/data/hkt_exchange_rate')
+
+    def get_hkt_details(self, stock_code):
+        return self._req('POST', '/api/data/hkt_details', json={"stock_code": stock_code})
+
+    def get_hkt_statistics(self, stock_code):
+        return self._req('POST', '/api/data/hkt_statistics', json={"stock_code": stock_code})
+
+    def get_market_time(self):
+        return self._req('POST', '/api/data/market_time')
+
+    def get_option_detail_data(self, stockcode):
+        return self._req('POST', '/api/data/option_detail_data', json={"stockcode": stockcode})
+
+    def load_stk_list(self, dirfile, namefile):
+        return self._req('POST', '/api/data/load_stk_list', json={
+            "dirfile": dirfile, "namefile": namefile
+        })
+
+    def load_stk_vol_list(self, dirfile, namefile):
+        return self._req('POST', '/api/data/load_stk_vol_list', json={
+            "dirfile": dirfile, "namefile": namefile
+        })
+
+    def get_basket(self, basket_name):
+        return self._req('POST', '/api/data/get_basket', json={"basket_name": basket_name})
+
+    def set_basket(self, basket_name, stock_list):
+        return self._req('POST', '/api/data/set_basket', json={
+            "basket_name": basket_name, "stock_list": stock_list
+        })
+
+    def get_st_status(self, stock_code):
+        return self._req('POST', '/api/data/st_status', json={"stock_code": stock_code})
+
+    # ============= 新增交易接口 =============
+    def stoploss_limitprice(self, stoploss_code, order_type, op_type, account, stock_code, stop_price, stop_amount, price_type=11, price=0, volume=0, strategy_name='', quick_trade=2, userid=''):
+        return self._req('POST', '/api/trade/stoploss_limitprice', json={
+            "stoplossCode": stoploss_code, "orderType": order_type, "opType": op_type,
+            "account": account, "stockCode": stock_code, "stopPrice": stop_price,
+            "stopAmount": stop_amount, "priceType": price_type, "price": price,
+            "volume": volume, "strategyName": strategy_name, "quickTrade": quick_trade, "userid": userid
+        })
+
+    def stoploss_marketprice(self, stoploss_code, order_type, op_type, account, stock_code, trigger_price, stop_amount, price_type=11, volume=0, strategy_name='', quick_trade=2, userid=''):
+        return self._req('POST', '/api/trade/stoploss_marketprice', json={
+            "stoplossCode": stoploss_code, "orderType": order_type, "opType": op_type,
+            "account": account, "stockCode": stock_code, "triggerPrice": trigger_price,
+            "stopAmount": stop_amount, "priceType": price_type, "volume": volume,
+            "strategyName": strategy_name, "quickTrade": quick_trade, "userid": userid
+        })
+
+    def make_option_combination(self, account, opt_comb_list, hedge_ratio=1, quick_trade=2, userid=''):
+        return self._req('POST', '/api/trade/make_option_combination', json={
+            "account": account, "optCombList": opt_comb_list, "hedgeRatio": hedge_ratio,
+            "quickTrade": quick_trade, "userid": userid
+        })
+
+    def release_option_combination(self, account, opt_comb_list, quick_trade=2, userid=''):
+        return self._req('POST', '/api/trade/release_option_combination', json={
+            "account": account, "optCombList": opt_comb_list,
+            "quickTrade": quick_trade, "userid": userid
+        })
+
+    def get_unclosed_compacts(self, account, stock_code='', compact_type=''):
+        return self._req('POST', '/api/trade/unclosed_compacts', json={
+            "account": account, "stockCode": stock_code, "compactType": compact_type
+        })
+
+    def get_closed_compacts(self, account, stock_code='', compact_type=''):
+        return self._req('POST', '/api/trade/closed_compacts', json={
+            "account": account, "stockCode": stock_code, "compactType": compact_type
+        })
+
+    def get_option_subject_position(self, account, opt_code=''):
+        return self._req('POST', '/api/data/option_subject_position', json={
+            "account": account, "optCode": opt_code
+        })
+
+    def get_comb_option(self, account):
+        return self._req('POST', '/api/data/comb_option', json={"account": account})
+
+    def call_formula(self, formula_name, params=None):
+        return self._req('POST', '/api/ext/call_formula', json={
+            "formula_name": formula_name, "params": params or []
+        })
+
+    def get_ext_all_data(self, extdataname, stockcode='', start_time='', end_time=''):
+        return self._req('POST', '/api/ext/ext_all_data', json={
+            "extdataname": extdataname, "stockcode": stockcode,
+            "start_time": start_time, "end_time": end_time
         })
 
     # ============= 兼容方法(原有) =============

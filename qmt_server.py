@@ -123,7 +123,7 @@ def safe_json_dumps(obj, **kwargs):
         logger.error("[safe_json_dumps] JSON序列化失败: {}, 原始类型: {}, NaN转了{}处".format(
             e, type(obj).__name__, _nan_converted_count[0]))
         try:
-            return json.dumps({"error": u"数据序列化失败: {}".format(str(e))}, ensure_ascii=False)
+            return json.dumps({"error": u"数据序列化失败: {}".format(str(e))}, ensure_ascii=True)
         except Exception:
             return '{"error": "data serialization failed"}'
 
@@ -278,7 +278,7 @@ class BaseHandler(RequestHandler):
         self.finish(json.dumps({
             "error": self._reason,
             "status_code": status_code
-        }, ensure_ascii=False))
+        }, ensure_ascii=True))
 
     def ctx(self):
         return self.application.ContextInfo
@@ -286,67 +286,124 @@ class BaseHandler(RequestHandler):
     def acc(self):
         return self.application.accountID
 
+    def _collect_order_ids(self):
+        """收集当前活跃委托的ID集合，用于后续排重委托"""
+        try:
+            orders = get_trade_detail_data(self.acc(), 'stock', 'order', 'qmt') or []
+            ids = set()
+            for order in orders:
+                ref = getattr(order, 'm_strOrderSysID', '') or ''
+                if not ref:
+                    ref = str(getattr(order, 'm_nOrderId', ''))
+                if ref:
+                    ids.add(str(ref))
+            return ids
+        except Exception:
+            return set()
+
+    def _find_new_order_ref(self, stock_code, exclude_ids, max_wait=2):
+        """排除已知委托ID后，查找新增的委托订单
+        返回 (found, order_ref)
+        """
+        import time as _time
+        _time.sleep(0.3)
+        for _i in range(int(max_wait / 0.5)):
+            try:
+                orders = get_trade_detail_data(self.acc(), 'stock', 'order', 'qmt') or []
+                # 按时间倒序查找，最先匹配的最前
+                for order in reversed(orders):
+                    ref = getattr(order, 'm_strOrderSysID', '') or ''
+                    if not ref:
+                        ref = str(getattr(order, 'm_nOrderId', ''))
+                    if not ref or str(ref) in exclude_ids:
+                        continue
+                    # 找到新委托，检查股票代码是否匹配
+                    order_stock = getattr(order, 'm_strInstrumentID', '') or ''
+                    order_exchange = getattr(order, 'm_strExchangeID', '') or ''
+                    full_code = "{}.{}".format(order_stock, order_exchange) if order_exchange else order_stock
+                    if stock_code and full_code and stock_code not in full_code:
+                        logger.info("[_find_new_order_ref] 跳过委托代码不匹配: code={}, ref={}".format(full_code, ref))
+                        continue
+                    logger.info("[_find_new_order_ref] 找到新增委托: stock={}, ref={}".format(full_code, ref))
+                    return True, str(ref)
+                # 检查是否有任何新委托，不管股票代码
+                current_ids = set()
+                for order in orders:
+                    ref = getattr(order, 'm_strOrderSysID', '') or ''
+                    if not ref:
+                        ref = str(getattr(order, 'm_nOrderId', ''))
+                    if ref:
+                        current_ids.add(str(ref))
+                new_ids = current_ids - exclude_ids
+                if new_ids:
+                    logger.info("[_find_new_order_ref] 发现新委托但股票不匹配, new_ids={}".format(list(new_ids)[:3]))
+                    return True, list(new_ids)[0]
+            except Exception as e:
+                logger.info("[_find_new_order_ref] 查询异常: {}".format(e))
+            _time.sleep(0.5)
+        return False, ""
+
 
 # ============= 1. ContextInfo 属性 =============
 # ContextInfo.period - 获取当前周期
 class ContextPeriodHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"period": self.ctx().period}, ensure_ascii=False))
+        self.write(json.dumps({"period": self.ctx().period}, ensure_ascii=True))
 
 # ContextInfo.barpos - 获取当前K线索引号
 class ContextBarposHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"barpos": self.ctx().barpos}, ensure_ascii=False))
+        self.write(json.dumps({"barpos": self.ctx().barpos}, ensure_ascii=True))
 
 # ContextInfo.time_tick_size - 获取当前K线数目
 class ContextTimeTickSizeHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"time_tick_size": self.ctx().time_tick_size}, ensure_ascii=False))
+        self.write(json.dumps({"time_tick_size": self.ctx().time_tick_size}, ensure_ascii=True))
 
 # ContextInfo.stockcode - 获取当前主图品种代码
 class ContextStockCodeHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"stockcode": self.ctx().stockcode}, ensure_ascii=False))
+        self.write(json.dumps({"stockcode": self.ctx().stockcode}, ensure_ascii=True))
 
 # ContextInfo.dividend_type - 获取当前复权方式
 class ContextDividendTypeHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"dividend_type": self.ctx().dividend_type}, ensure_ascii=False))
+        self.write(json.dumps({"dividend_type": self.ctx().dividend_type}, ensure_ascii=True))
 
 # ContextInfo.market - 获取当前主图市场
 class ContextMarketHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"market": self.ctx().market}, ensure_ascii=False))
+        self.write(json.dumps({"market": self.ctx().market}, ensure_ascii=True))
 
 # ContextInfo.do_back_test - 是否开启回测模式
 class ContextDoBackTestHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"do_back_test": self.ctx().do_back_test}, ensure_ascii=False))
+        self.write(json.dumps({"do_back_test": self.ctx().do_back_test}, ensure_ascii=True))
 
 # ContextInfo.benchmark - 获取回测基准
 class ContextBenchmarkHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"benchmark": self.ctx().benchmark}, ensure_ascii=False))
+        self.write(json.dumps({"benchmark": self.ctx().benchmark}, ensure_ascii=True))
 
 # ContextInfo.capital - 获取回测初始资金
 class ContextCapitalHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"capital": self.ctx().capital}, ensure_ascii=False))
+        self.write(json.dumps({"capital": self.ctx().capital}, ensure_ascii=True))
 
 # ContextInfo.get_universe() - 获取股票池中的股票
 class ContextUniverseHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"universe": self.ctx().get_universe()}, ensure_ascii=False))
+        self.write(json.dumps({"universe": self.ctx().get_universe()}, ensure_ascii=True))
 
 # ContextInfo.start - 获取回测开始时间
 class ContextStartHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"start": self.ctx().start}, ensure_ascii=False))
+        self.write(json.dumps({"start": self.ctx().start}, ensure_ascii=True))
 
 # ContextInfo.end - 获取回测结束时间
 class ContextEndHandler(BaseHandler):
     def get(self):
-        self.write(json.dumps({"end": self.ctx().end}, ensure_ascii=False))
+        self.write(json.dumps({"end": self.ctx().end}, ensure_ascii=True))
 
 
 # ============= 2. 数据查询 (ContextInfo get_*) =============
@@ -356,7 +413,7 @@ class StockNameHandler(BaseHandler):
         data = json.loads(self.request.body)
         stockcode = data.get('stockcode', '')
         ret = safe_call(self.ctx().get_stock_name, stockcode)
-        self.write(json.dumps({"stockcode": stockcode, "name": ret}, ensure_ascii=False))
+        self.write(json.dumps({"stockcode": stockcode, "name": ret}, ensure_ascii=True))
 
 # get_open_date() - 根据代码获取上市时间
 class OpenDateHandler(BaseHandler):
@@ -364,7 +421,7 @@ class OpenDateHandler(BaseHandler):
         data = json.loads(self.request.body)
         stockcode = data.get('stockcode', '')
         ret = safe_call(self.ctx().get_open_date, stockcode)
-        self.write(safe_json_dumps({"stockcode": stockcode, "open_date": ret}, ensure_ascii=False))
+        self.write(safe_json_dumps({"stockcode": stockcode, "open_date": ret}, ensure_ascii=True))
 
 # ContextInfo.get_last_volume() - 获取最新流通股本
 class LastVolumeHandler(BaseHandler):
@@ -373,9 +430,9 @@ class LastVolumeHandler(BaseHandler):
         stockcode = data.get('stockcode', '')
         ret = safe_call(self.ctx().get_last_volume, stockcode)
         if ret is None:
-            self.write(json.dumps({"error": "获取流通股本失败"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "获取流通股本失败"}, ensure_ascii=True))
             return
-        self.write(json.dumps({"stockcode": stockcode, "last_volume": ret}, ensure_ascii=False))
+        self.write(json.dumps({"stockcode": stockcode, "last_volume": ret}, ensure_ascii=True))
 
 # ContextInfo.get_bar_timetag() - 获取K线时间戳
 class BarTimetagHandler(BaseHandler):
@@ -383,13 +440,13 @@ class BarTimetagHandler(BaseHandler):
         data = json.loads(self.request.body)
         index = int(data.get('index', -1))
         ret = safe_call(self.ctx().get_bar_timetag, index)
-        self.write(json.dumps({"index": index, "timetag": ret}, ensure_ascii=False))
+        self.write(json.dumps({"index": index, "timetag": ret}, ensure_ascii=True))
 
 # ContextInfo.get_tick_timetag() - 获取最新分笔时间戳
 class TickTimetagHandler(BaseHandler):
     def get(self):
         ret = safe_call(self.ctx().get_tick_timetag)
-        self.write(json.dumps({"timetag": ret}, ensure_ascii=False))
+        self.write(json.dumps({"timetag": ret}, ensure_ascii=True))
 
 # ContextInfo.get_sector() - 获取指数成份股
 class SectorHandler(BaseHandler):
@@ -398,10 +455,10 @@ class SectorHandler(BaseHandler):
         sector = data.get('sector', '')
         realtime = data.get('realtime', '0')
         if not sector:
-            self.write(json.dumps({"error": "need args sector"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "need args sector"}, ensure_ascii=True))
             return
         ret = safe_call(self.ctx().get_sector, sector, int(realtime) if realtime != '0' else 0)
-        self.write(json.dumps({"sector": sector, "stocks": ret or []}, ensure_ascii=False))
+        self.write(json.dumps({"sector": sector, "stocks": ret or []}, ensure_ascii=True))
 
 # ContextInfo.get_industry() - 获取行业成份股
 class IndustryHandler(BaseHandler):
@@ -409,11 +466,11 @@ class IndustryHandler(BaseHandler):
         data = json.loads(self.request.body)
         industry = data.get('industry', '')
         if not industry:
-            self.write(json.dumps({"error": "need args industry"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "need args industry"}, ensure_ascii=True))
             return
         print(industry)
         ret = safe_call(self.ctx().get_industry, industry)
-        self.write(json.dumps({"industry": industry, "stocks": ret or []}, ensure_ascii=False))
+        self.write(json.dumps({"industry": industry, "stocks": ret or []}, ensure_ascii=True))
 
 # ContextInfo.get_stock_list_in_sector() - 获取板块成份股
 class StockListInSectorHandler(BaseHandler):
@@ -421,10 +478,10 @@ class StockListInSectorHandler(BaseHandler):
         data = json.loads(self.request.body)
         sectorname = data.get('sectorname', '')
         if not sectorname:
-            self.write(json.dumps({"error": "need args sectorname"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "need args sectorname"}, ensure_ascii=True))
             return
         ret = safe_call(self.ctx().get_stock_list_in_sector, sectorname)
-        self.write(json.dumps({"sectorname": sectorname, "stocks": ret or []}, ensure_ascii=False))
+        self.write(json.dumps({"sectorname": sectorname, "stocks": ret or []}, ensure_ascii=True))
 
 # ContextInfo.get_weight_in_index() - 获取指数中权重
 class WeightInIndexHandler(BaseHandler):
@@ -433,7 +490,7 @@ class WeightInIndexHandler(BaseHandler):
         indexcode = data.get('indexcode', '')
         stockcode = data.get('stockcode', '')
         ret = safe_call(self.ctx().get_weight_in_index, indexcode, stockcode)
-        self.write(json.dumps({"indexcode": indexcode, "stockcode": stockcode, "weight": ret}, ensure_ascii=False))
+        self.write(json.dumps({"indexcode": indexcode, "stockcode": stockcode, "weight": ret}, ensure_ascii=True))
 
 # ContextInfo.get_contract_multiplier() - 获取合约乘数
 class ContractMultiplierHandler(BaseHandler):
@@ -441,7 +498,7 @@ class ContractMultiplierHandler(BaseHandler):
         data = json.loads(self.request.body)
         contractcode = data.get('contractcode', '')
         ret = safe_call(self.ctx().get_contract_multiplier, contractcode)
-        self.write(json.dumps({"contractcode": contractcode, "multiplier": ret}, ensure_ascii=False))
+        self.write(json.dumps({"contractcode": contractcode, "multiplier": ret}, ensure_ascii=True))
 
 # ContextInfo.get_risk_free_rate() - 获取无风险利率
 class RiskFreeRateHandler(BaseHandler):
@@ -449,7 +506,7 @@ class RiskFreeRateHandler(BaseHandler):
         data = json.loads(self.request.body)
         index = int(data.get('index', '-1'))
         ret = safe_call(self.ctx().get_risk_free_rate, index)
-        self.write(json.dumps({"index": index, "risk_free_rate": ret}, ensure_ascii=False))
+        self.write(json.dumps({"index": index, "risk_free_rate": ret}, ensure_ascii=True))
 
 # ContextInfo.get_date_location() - 获取日期对应的K线索引
 class DateLocationHandler(BaseHandler):
@@ -457,7 +514,7 @@ class DateLocationHandler(BaseHandler):
         data = json.loads(self.request.body)
         strdate = data.get('strdate', '')
         ret = safe_call(self.ctx().get_date_location, strdate)
-        self.write(json.dumps({"strdate": strdate, "location": ret}, ensure_ascii=False))
+        self.write(json.dumps({"strdate": strdate, "location": ret}, ensure_ascii=True))
 
 # ContextInfo.get_history_data() - 获取历史行情数据(多品种字典)
 # 注意: 此API依赖handlebar上下文，HTTP handler中可能无法获取数据
@@ -496,7 +553,7 @@ class HistoryDataHandler(BaseHandler):
                            (isinstance(ret, dict) and len(ret) == 0))
             if not ret_is_empty:
                 logger.info("[HistoryData] 步骤1成功，直接返回")
-                self.write(safe_json_dumps({"data": ret}, ensure_ascii=False))
+                self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
                 return
             logger.info("[HistoryData] 步骤1返回空，ret_is_empty={}".format(ret_is_empty))
 
@@ -504,7 +561,7 @@ class HistoryDataHandler(BaseHandler):
             # 降级方案: 优先get_local_data(已确认可用) > get_market_data_ex
             if not stocks:
                 logger.info("[HistoryData] 未提供stock_list，无法自动降级")
-                self.write(json.dumps({"error": "获取历史数据失败。get_history_data依赖handlebar上下文，且未提供stock_list参数，无法自动降级"}, ensure_ascii=False))
+                self.write(json.dumps({"error": "获取历史数据失败。get_history_data依赖handlebar上下文，且未提供stock_list参数，无法自动降级"}, ensure_ascii=True))
                 return
             try:
                 # 计算默认日期范围（覆盖2年，确保能找到下载数据）
@@ -542,7 +599,7 @@ class HistoryDataHandler(BaseHandler):
                         result_data = local_ret.to_dict()
                     else:
                         result_data = local_ret
-                    json_str = safe_json_dumps({"data": result_data, "note": "由get_local_data替代返回"}, ensure_ascii=False)
+                    json_str = safe_json_dumps({"data": result_data, "note": "由get_local_data替代返回"}, ensure_ascii=True)
                     logger.info("[HistoryData] 步骤2成功, 输出长度={}, 前200字符={}".format(len(json_str), json_str[:200]))
                     self.write(json_str)
                     return
@@ -591,7 +648,7 @@ class HistoryDataHandler(BaseHandler):
                             result[k] = {}
                         else:
                             result[k] = v
-                    json_str = safe_json_dumps({"data": result, "note": "由get_market_data_ex替代返回"}, ensure_ascii=False)
+                    json_str = safe_json_dumps({"data": result, "note": "由get_market_data_ex替代返回"}, ensure_ascii=True)
                     logger.info("[HistoryData] 步骤3成功, 输出长度={}, 前200字符={}".format(len(json_str), json_str[:200]))
                     self.write(json_str)
                     return
@@ -599,10 +656,10 @@ class HistoryDataHandler(BaseHandler):
                 logger.info("[HistoryData] 所有降级方案均失败")
             except Exception as e2:
                 logger.error("[HistoryData] 降级失败: {}".format(e2))
-            self.write(json.dumps({"error": "获取历史数据失败。get_history_data依赖handlebar上下文，get_local_data/get_market_data_ex降级也未返回有效数据。可能需要先download_history_data或检查日期范围"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "获取历史数据失败。get_history_data依赖handlebar上下文，get_local_data/get_market_data_ex降级也未返回有效数据。可能需要先download_history_data或检查日期范围"}, ensure_ascii=True))
         except Exception as e:
             logger.exception("[HistoryData] handler error")
-            self.write(json.dumps({"error": str(e)}, ensure_ascii=False))
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
 
 # ContextInfo.get_market_data() - 获取行情数据(DataFrame)
 class MarketDataHandler(BaseHandler):
@@ -621,13 +678,13 @@ class MarketDataHandler(BaseHandler):
             ret = self.ctx().get_market_data(fields_list, stock_list, start_time, end_time, True, period, dividend_type, count)
         except Exception as e:
             logger.error("get_market_data 调用失败: {}".format(e))
-            self.write(json.dumps({"error": "获取行情数据失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"error": "获取行情数据失败: {}".format(str(e))}, ensure_ascii=True))
         if ret is None:
-            self.write(json.dumps({"error": "获取行情数据失败，API返回None"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "获取行情数据失败，API返回None"}, ensure_ascii=True))
             return
         if hasattr(ret, 'to_dict'):
             ret = ret.to_dict()
-        self.write(safe_json_dumps({"data": ret}, ensure_ascii=False))
+        self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
 
 # ContextInfo.get_market_data_ex() - 获取扩展行情(Level2)
 class MarketDataExHandler(BaseHandler):
@@ -646,9 +703,9 @@ class MarketDataExHandler(BaseHandler):
             ret = self.ctx().get_market_data_ex(fields_list, stock_list, period, start_time, end_time, count, dividend_type)
         except Exception as e:
             logger.error("get_market_data_ex 调用失败: {}".format(e))
-            self.write(json.dumps({"error": "获取扩展行情失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"error": "获取扩展行情失败: {}".format(str(e))}, ensure_ascii=True))
         if ret is None:
-            self.write(json.dumps({"error": "获取扩展行情失败，API返回None"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "获取扩展行情失败，API返回None"}, ensure_ascii=True))
             return
         result = {}
         for k, v in ret.items():
@@ -658,7 +715,7 @@ class MarketDataExHandler(BaseHandler):
                 result[k] = {}
             else:
                 result[k] = str(v)
-        self.write(safe_json_dumps({"data": result}, ensure_ascii=False))
+        self.write(safe_json_dumps({"data": result}, ensure_ascii=True))
 
 # ContextInfo.get_full_tick() - 获取分笔数据
 class FullTickHandler(BaseHandler):
@@ -666,14 +723,14 @@ class FullTickHandler(BaseHandler):
         data = json.loads(self.request.body)
         stocks = data.get('stocks', '')
         if not stocks:
-            self.write(json.dumps({"error": "need args stocks"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "need args stocks"}, ensure_ascii=True))
             return
         code_list = [s.strip() for s in stocks.split(',')]
         ret = safe_call(self.ctx().get_full_tick, code_list)
         if not ret:
-            self.write(json.dumps({"error": "获取分笔行情失败"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "获取分笔行情失败"}, ensure_ascii=True))
             return
-        self.write(json.dumps(ret, ensure_ascii=False, default=str))
+        self.write(json.dumps(ret, ensure_ascii=True, default=str))
 
 # ContextInfo.get_divid_factors() - 获取除权除息和复权因子
 class DividFactorsHandler(BaseHandler):
@@ -681,7 +738,7 @@ class DividFactorsHandler(BaseHandler):
         data = json.loads(self.request.body)
         stockcode = data.get('stockcode', '')
         ret = safe_call(self.ctx().get_divid_factors, stockcode)
-        self.write(json.dumps({"stockcode": stockcode, "factors": ret or {}}, ensure_ascii=False))
+        self.write(json.dumps({"stockcode": stockcode, "factors": ret or {}}, ensure_ascii=True))
 
 # ContextInfo.get_main_contract() - 获取期货主力合约
 class MainContractHandler(BaseHandler):
@@ -689,7 +746,7 @@ class MainContractHandler(BaseHandler):
         data = json.loads(self.request.body)
         codemarket = data.get('codemarket', '')
         ret = safe_call(self.ctx().get_main_contract, codemarket)
-        self.write(json.dumps({"codemarket": codemarket, "main_contract": ret}, ensure_ascii=False))
+        self.write(json.dumps({"codemarket": codemarket, "main_contract": ret}, ensure_ascii=True))
 
 # timetag_to_datetime() - 毫秒时间戳转日期时间
 class TimetagToDatetimeHandler(BaseHandler):
@@ -698,7 +755,7 @@ class TimetagToDatetimeHandler(BaseHandler):
         timetag = int(data.get('timetag', '0'))
         fmt = data.get('format', '%Y-%m-%d %H:%M:%S')
         ret = safe_call(timetag_to_datetime, timetag, fmt)
-        self.write(json.dumps({"timetag": timetag, "datetime": ret}, ensure_ascii=False))
+        self.write(json.dumps({"timetag": timetag, "datetime": ret}, ensure_ascii=True))
 
 # ContextInfo.get_total_share() - 获取总股本
 class TotalShareHandler(BaseHandler):
@@ -706,7 +763,7 @@ class TotalShareHandler(BaseHandler):
         data = json.loads(self.request.body)
         stockcode = data.get('stockcode', '')
         ret = safe_call(self.ctx().get_total_share, stockcode)
-        self.write(json.dumps({"stockcode": stockcode, "total_share": ret}, ensure_ascii=False))
+        self.write(json.dumps({"stockcode": stockcode, "total_share": ret}, ensure_ascii=True))
 
 # ContextInfo.get_trading_dates() - 获取交易日列表
 # QMT签名: get_trading_dates(stockcode, start_date, end_date, count, period)
@@ -737,7 +794,7 @@ class TradingDatesHandler(BaseHandler):
                     type(ret).__name__, ret is None, len(ret) if ret is not None else 'N/A'))
             if ret and not (isinstance(ret, (list, tuple)) and len(ret) == 0):
                 logger.info("[TradingDates] 方式1成功, 日期数={}".format(len(ret) if hasattr(ret, '__len__') else 'N/A'))
-                self.write(json.dumps({"dates": ret}, ensure_ascii=False, default=str))
+                self.write(json.dumps({"dates": ret}, ensure_ascii=True, default=str))
                 return
 
             # 方式2: get_trading_dates依赖handlebar上下文，降级用get_local_data提取交易日
@@ -778,17 +835,17 @@ class TradingDatesHandler(BaseHandler):
                             trading_dates = trading_dates[:count_int]
                         logger.info("[TradingDates] 方式2提取交易日: count={}".format(len(trading_dates)))
                         if trading_dates:
-                            self.write(json.dumps({"dates": trading_dates, "note": "由get_local_data提取"}, ensure_ascii=False))
+                            self.write(json.dumps({"dates": trading_dates, "note": "由get_local_data提取"}, ensure_ascii=True))
                             return
                         else:
                             logger.info("[TradingDates] 方式2提取结果为空")
                 except Exception as e2:
                     logger.info("[TradingDates] get_local_data降级失败: {}".format(e2))
 
-            self.write(json.dumps({"dates": [], "warning": "获取交易日失败。get_trading_dates依赖handlebar上下文，get_local_data降级也未返回有效数据。可能需要先download_history_data"}, ensure_ascii=False))
+            self.write(json.dumps({"dates": [], "warning": "获取交易日失败。get_trading_dates依赖handlebar上下文，get_local_data降级也未返回有效数据。可能需要先download_history_data"}, ensure_ascii=True))
         except Exception as e:
             logger.error("[TradingDates] 调用失败: {}".format(e))
-            self.write(json.dumps({"dates": [], "error": str(e)}, ensure_ascii=False))
+            self.write(json.dumps({"dates": [], "error": str(e)}, ensure_ascii=True))
 
 # ContextInfo.get_svol() - 获取内盘成交量
 class SvolHandler(BaseHandler):
@@ -796,7 +853,7 @@ class SvolHandler(BaseHandler):
         data = json.loads(self.request.body)
         stockcode = data.get('stockcode', '')
         ret = safe_call(self.ctx().get_svol, stockcode)
-        self.write(json.dumps({"stockcode": stockcode, "svol": ret}, ensure_ascii=False))
+        self.write(json.dumps({"stockcode": stockcode, "svol": ret}, ensure_ascii=True))
 
 # ContextInfo.get_bvol() - 获取外盘成交量
 class BvolHandler(BaseHandler):
@@ -804,7 +861,7 @@ class BvolHandler(BaseHandler):
         data = json.loads(self.request.body)
         stockcode = data.get('stockcode', '')
         ret = safe_call(self.ctx().get_bvol, stockcode)
-        self.write(json.dumps({"stockcode": stockcode, "bvol": ret}, ensure_ascii=False))
+        self.write(json.dumps({"stockcode": stockcode, "bvol": ret}, ensure_ascii=True))
 
 # ContextInfo.get_longhubang() - 获取龙虎榜数据
 class LonghubangHandler(BaseHandler):
@@ -817,7 +874,7 @@ class LonghubangHandler(BaseHandler):
         ret = safe_call(self.ctx().get_longhubang, slist, startTime, endTime)
         if hasattr(ret, 'to_dict'):
             ret = ret.to_dict()
-        self.write(json.dumps({"data": ret} if ret else {"error": "获取龙虎榜数据失败"}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"data": ret} if ret else {"error": "获取龙虎榜数据失败"}, ensure_ascii=True, default=str))
 
 # get_top10_share_holder() - 获取十大股东数据
 # 返回可能是 Series/DataFrame/Panel，需要安全序列化
@@ -831,7 +888,7 @@ class Top10ShareHolderHandler(BaseHandler):
         slist = [s.strip() for s in stock_list.split(',')] if stock_list else []
         ret = safe_call(self.ctx().get_top10_share_holder, slist, data_name, start_time, end_time)
         if ret is None:
-            self.write(safe_json_dumps({"error": "获取十大股东数据失败"}, ensure_ascii=False))
+            self.write(safe_json_dumps({"error": "获取十大股东数据失败"}, ensure_ascii=True))
         else:
             import pandas as pd
             if isinstance(ret, pd.Panel):
@@ -839,13 +896,13 @@ class Top10ShareHolderHandler(BaseHandler):
                 result = {}
                 for item in ret.items:
                     result[item] = ret[item].to_dict(orient='list')
-                self.write(safe_json_dumps({"data": result}, ensure_ascii=False))
+                self.write(safe_json_dumps({"data": result}, ensure_ascii=True))
             elif isinstance(ret, pd.DataFrame):
-                self.write(safe_json_dumps({"data": ret.to_dict(orient='list')}, ensure_ascii=False))
+                self.write(safe_json_dumps({"data": ret.to_dict(orient='list')}, ensure_ascii=True))
             elif isinstance(ret, pd.Series):
-                self.write(safe_json_dumps({"data": ret.to_dict()}, ensure_ascii=False))
+                self.write(safe_json_dumps({"data": ret.to_dict()}, ensure_ascii=True))
             else:
-                self.write(safe_json_dumps({"data": ret}, ensure_ascii=False))
+                self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
 
 # ContextInfo.get_option_detail_data() - 获取期权详细信息
 class OptionDetailHandler(BaseHandler):
@@ -853,7 +910,7 @@ class OptionDetailHandler(BaseHandler):
         data = json.loads(self.request.body)
         optioncode = data.get('optioncode', '')
         ret = safe_call(self.ctx().get_option_detail_data, optioncode)
-        self.write(json.dumps({"optioncode": optioncode, "detail": ret or {}}, ensure_ascii=False))
+        self.write(json.dumps({"optioncode": optioncode, "detail": ret or {}}, ensure_ascii=True))
 
 # ContextInfo.get_turnover_rate() - 获取换手率
 class TurnoverRateHandler(BaseHandler):
@@ -866,16 +923,16 @@ class TurnoverRateHandler(BaseHandler):
         try:
             ret = self.ctx().get_turnover_rate(slist, startTime, endTime)
             if ret is None:
-                self.write(json.dumps({"error": "获取换手率失败，API返回None"}, ensure_ascii=False))
+                self.write(json.dumps({"error": "获取换手率失败，API返回None"}, ensure_ascii=True))
             elif hasattr(ret, 'empty') and ret.empty:
-                self.write(json.dumps({"data": {}, "warning": "返回空DataFrame，可能无该时段数据"}, ensure_ascii=False))
+                self.write(json.dumps({"data": {}, "warning": "返回空DataFrame，可能无该时段数据"}, ensure_ascii=True))
             elif hasattr(ret, 'to_dict'):
-                self.write(safe_json_dumps({"data": ret.to_dict()}, ensure_ascii=False))
+                self.write(safe_json_dumps({"data": ret.to_dict()}, ensure_ascii=True))
             else:
-                self.write(json.dumps({"data": ret}, ensure_ascii=False, default=str))
+                self.write(json.dumps({"data": ret}, ensure_ascii=True, default=str))
         except Exception as e:
             logger.error("get_turnover_rate 调用失败: {}".format(e))
-            self.write(json.dumps({"error": "获取换手率失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"error": "获取换手率失败: {}".format(str(e))}, ensure_ascii=True))
 
 # get_etf_info() - 获取ETF申赎清单及成分股
 class EtfInfoHandler(BaseHandler):
@@ -883,7 +940,7 @@ class EtfInfoHandler(BaseHandler):
         data = json.loads(self.request.body)
         stockcode = data.get('stockcode', '')
         ret = safe_call(get_etf_info, stockcode)
-        self.write(json.dumps({"stockcode": stockcode, "info": ret or {}}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"stockcode": stockcode, "info": ret or {}}, ensure_ascii=True, default=str))
 
 # get_etf_iopv() - 获取ETF基金份额参考净值
 class EtfIopvHandler(BaseHandler):
@@ -891,7 +948,7 @@ class EtfIopvHandler(BaseHandler):
         data = json.loads(self.request.body)
         stockcode = data.get('stockcode', '')
         ret = safe_call(get_etf_iopv, stockcode)
-        self.write(json.dumps({"stockcode": stockcode, "iopv": ret}, ensure_ascii=False))
+        self.write(json.dumps({"stockcode": stockcode, "iopv": ret}, ensure_ascii=True))
 
 # ContextInfo.get_instrumentdetail() - 获取合约详细信息
 class InstrumentDetailHandler(BaseHandler):
@@ -899,7 +956,7 @@ class InstrumentDetailHandler(BaseHandler):
         data = json.loads(self.request.body)
         stockcode = data.get('stockcode', '')
         ret = safe_call(self.ctx().get_instrumentdetail, stockcode)
-        self.write(json.dumps({"stockcode": stockcode, "detail": ret or {}}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"stockcode": stockcode, "detail": ret or {}}, ensure_ascii=True, default=str))
 
 # ContextInfo.get_contract_expire_date() - 获取期货合约到期日
 class ContractExpireDateHandler(BaseHandler):
@@ -907,7 +964,7 @@ class ContractExpireDateHandler(BaseHandler):
         data = json.loads(self.request.body)
         codemarket = data.get('codemarket', '')
         ret = safe_call(self.ctx().get_contract_expire_date, codemarket)
-        self.write(json.dumps({"codemarket": codemarket, "expire_date": ret}, ensure_ascii=False))
+        self.write(json.dumps({"codemarket": codemarket, "expire_date": ret}, ensure_ascii=True))
 
 # ContextInfo.get_option_undl_data() - 获取期权标的对应的期权品种列表
 class OptionUndlDataHandler(BaseHandler):
@@ -915,7 +972,7 @@ class OptionUndlDataHandler(BaseHandler):
         data = json.loads(self.request.body)
         undl_code_ref = data.get('undl_code_ref', '')
         ret = safe_call(self.ctx().get_option_undl_data, undl_code_ref)
-        self.write(json.dumps({"data": ret or []}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"data": ret or []}, ensure_ascii=True, default=str))
 
 # ContextInfo.get_financial_data() - 获取财务数据
 # 批量用法字段格式: 表名.字段名 (如 ASHAREINCOME.net_profit_incl_min_int_inc)
@@ -1044,34 +1101,34 @@ class FinancialDataHandler(BaseHandler):
                         logger.info("[FinancialData] 方式2(仅表名) 失败: {}".format(e2))
 
             if ret is None:
-                self.write(json.dumps({"error": "获取财务数据失败，API返回None。正确字段格式: 表名.字段名 (如 ASHAREINCOME.net_profit_incl_min_int_inc)。有效表名: ASHAREBALANCESHEET/ASHAREINCOME/ASHARECASHFLOW/CAPITALSTRUCTURE/PERSHAREINDEX"}, ensure_ascii=False))
+                self.write(json.dumps({"error": "获取财务数据失败，API返回None。正确字段格式: 表名.字段名 (如 ASHAREINCOME.net_profit_incl_min_int_inc)。有效表名: ASHAREBALANCESHEET/ASHAREINCOME/ASHARECASHFLOW/CAPITALSTRUCTURE/PERSHAREINDEX"}, ensure_ascii=True))
             elif hasattr(ret, 'empty') and ret.empty:
-                self.write(json.dumps({"data": {}, "warning": "返回空DataFrame，可能字段名或日期范围无效"}, ensure_ascii=False))
+                self.write(json.dumps({"data": {}, "warning": "返回空DataFrame，可能字段名或日期范围无效"}, ensure_ascii=True))
             elif hasattr(ret, 'to_dict'):
                 ret_dict = ret.to_dict()
                 logger.info("[FinancialData] to_dict后: type={}, keys={}, repr={}".format(
                     type(ret_dict).__name__, list(ret_dict.keys()) if isinstance(ret_dict, dict) else 'N/A',
                     repr(ret_dict)[:500]))
-                json_str = safe_json_dumps({"data": ret_dict}, ensure_ascii=False)
+                json_str = safe_json_dumps({"data": ret_dict}, ensure_ascii=True)
                 logger.info("[FinancialData] safe_json_dumps输出长度={}, 前200字符={}".format(
                     len(json_str), json_str[:200]))
                 self.write(json_str)
             elif isinstance(ret, (int, float, str)):
                 logger.info("[FinancialData] 标量值: type={}, value={}".format(type(ret).__name__, repr(ret)[:200]))
-                self.write(safe_json_dumps({"data": ret}, ensure_ascii=False))
+                self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
             else:
                 logger.info("[FinancialData] 其他类型: type={}, repr={}".format(
                     type(ret).__name__, repr(ret)[:500]))
-                json_str = safe_json_dumps({"data": ret}, ensure_ascii=False)
+                json_str = safe_json_dumps({"data": ret}, ensure_ascii=True)
                 logger.info("[FinancialData] safe_json_dumps输出长度={}, 前200字符={}".format(
                     len(json_str), json_str[:200]))
                 self.write(json_str)
         except Exception as e:
             logger.exception("[FinancialData] 调用失败: {}".format(e))
             try:
-                self.write(json.dumps({"error": "获取财务数据失败: {}".format(str(e))}, ensure_ascii=False))
+                self.write(json.dumps({"error": "获取财务数据失败: {}".format(str(e))}, ensure_ascii=True))
             except Exception:
-                self.write(json.dumps({"error": "获取财务数据失败(内部错误序列化失败)"}, ensure_ascii=False))
+                self.write(json.dumps({"error": "获取财务数据失败(内部错误序列化失败)"}, ensure_ascii=True))
 
 # ContextInfo.get_factor_data() - 获取多因子数据
 # 注意: 因子名需要是QMT内置因子，如 'alpha1','alpha2',... 或自定义因子名
@@ -1135,28 +1192,28 @@ class FactorDataHandler(BaseHandler):
                     logger.info("[FactorData] 方式2 get_factor_value 失败: {}".format(e3))
             if ret is None:
                 logger.info("[FactorData] 所有方式均返回None")
-                self.write(json.dumps({"error": "获取因子数据失败，API返回None。注意: get_factor_value依赖handlebar上下文，HTTP handler中无法调用。需在策略handlebar回调中使用。"}, ensure_ascii=False))
+                self.write(json.dumps({"error": "获取因子数据失败，API返回None。注意: get_factor_value依赖handlebar上下文，HTTP handler中无法调用。需在策略handlebar回调中使用。"}, ensure_ascii=True))
             elif hasattr(ret, 'empty') and ret.empty:
                 logger.info("[FactorData] 返回空DataFrame")
-                self.write(json.dumps({"data": {}, "warning": "返回空DataFrame，可能因子名无效"}, ensure_ascii=False))
+                self.write(json.dumps({"data": {}, "warning": "返回空DataFrame，可能因子名无效"}, ensure_ascii=True))
             elif hasattr(ret, 'to_dict'):
                 ret_dict = ret.to_dict()
                 logger.info("[FactorData] to_dict后: type={}, repr={}".format(
                     type(ret_dict).__name__, repr(ret_dict)[:500]))
-                json_str = safe_json_dumps({"data": ret_dict}, ensure_ascii=False)
+                json_str = safe_json_dumps({"data": ret_dict}, ensure_ascii=True)
                 logger.info("[FactorData] safe_json_dumps输出长度={}, 前200字符={}".format(
                     len(json_str), json_str[:200]))
                 self.write(json_str)
             else:
                 logger.info("[FactorData] 其他类型: type={}, repr={}".format(
                     type(ret).__name__, repr(ret)[:500]))
-                json_str = safe_json_dumps({"data": ret}, ensure_ascii=False)
+                json_str = safe_json_dumps({"data": ret}, ensure_ascii=True)
                 logger.info("[FactorData] safe_json_dumps输出长度={}, 前200字符={}".format(
                     len(json_str), json_str[:200]))
                 self.write(json_str)
         except Exception as e:
             logger.error("[FactorData] 调用失败: {}".format(e))
-            self.write(json.dumps({"error": "获取因子数据失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"error": "获取因子数据失败: {}".format(str(e))}, ensure_ascii=True))
 
 # ContextInfo.get_his_st_data() - 获取历史ST数据
 class HisStDataHandler(BaseHandler):
@@ -1164,7 +1221,7 @@ class HisStDataHandler(BaseHandler):
         data = json.loads(self.request.body)
         stockCode = data.get('stockCode', '')
         ret = safe_call(self.ctx().get_his_st_data, stockCode)
-        self.write(json.dumps({"stockCode": stockCode, "data": ret or {}}, ensure_ascii=False))
+        self.write(json.dumps({"stockCode": stockCode, "data": ret or {}}, ensure_ascii=True))
 
 # ContextInfo.get_his_index_data() - 获取历史指数数据
 class HisIndexDataHandler(BaseHandler):
@@ -1172,13 +1229,13 @@ class HisIndexDataHandler(BaseHandler):
         data = json.loads(self.request.body)
         index = data.get('index', '')
         ret = safe_call(self.ctx().get_his_index_data, index)
-        self.write(json.dumps({"index": index, "data": ret or {}}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"index": index, "data": ret or {}}, ensure_ascii=True, default=str))
 
 # ContextInfo.get_all_subscription() - 获取当前所有行情订阅信息
 class AllSubscriptionHandler(BaseHandler):
     def get(self):
         ret = safe_call(self.ctx().get_all_subscription)
-        self.write(json.dumps({"subscriptions": ret or {}}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"subscriptions": ret or {}}, ensure_ascii=True, default=str))
 
 # ContextInfo.get_option_list() - 获取指定期权列表
 class OptionListHandler(BaseHandler):
@@ -1192,10 +1249,10 @@ class OptionListHandler(BaseHandler):
             if isinstance(isavailable, str):
                 isavailable = isavailable.lower() == 'true'
             ret = safe_call(self.ctx().get_option_list, undl_code, dedate, opttype, isavailable)
-            self.write(safe_json_dumps({"option_list": ret or []}, ensure_ascii=False))
+            self.write(safe_json_dumps({"option_list": ret or []}, ensure_ascii=True))
         except Exception as e:
             logger.exception("get_option_list handler error")
-            self.write(json.dumps({"error": str(e)}, ensure_ascii=False))
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
 
 # ContextInfo.get_his_contract_list() - 获取过期合约列表
 class HisContractListHandler(BaseHandler):
@@ -1203,7 +1260,7 @@ class HisContractListHandler(BaseHandler):
         data = json.loads(self.request.body)
         market = data.get('market', '')
         ret = safe_call(self.ctx().get_his_contract_list, market)
-        self.write(json.dumps({"market": market, "contracts": ret or []}, ensure_ascii=False))
+        self.write(json.dumps({"market": market, "contracts": ret or []}, ensure_ascii=True))
 
 # ContextInfo.get_option_iv() - 获取期权实时隐含波动率
 class OptionIvHandler(BaseHandler):
@@ -1211,7 +1268,7 @@ class OptionIvHandler(BaseHandler):
         data = json.loads(self.request.body)
         optioncode = data.get('optioncode', '')
         ret = safe_call(self.ctx().get_option_iv, optioncode)
-        self.write(json.dumps({"optioncode": optioncode, "iv": ret}, ensure_ascii=False))
+        self.write(json.dumps({"optioncode": optioncode, "iv": ret}, ensure_ascii=True))
 
 # ContextInfo.bsm_price() - BS模型计算欧式期权理论价格
 class BsmPriceHandler(BaseHandler):
@@ -1229,7 +1286,7 @@ class BsmPriceHandler(BaseHandler):
         except ValueError:
             op = [float(x) for x in objectPrices.split(',')]
         ret = safe_call(self.ctx().bsm_price, optionType, op, strikePrice, riskFree, sigma, days, dividend)
-        self.write(json.dumps({"price": ret}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"price": ret}, ensure_ascii=True, default=str))
 
 # ContextInfo.bsm_iv() - BS模型计算欧式期权隐含波动率
 class BsmIvHandler(BaseHandler):
@@ -1243,7 +1300,7 @@ class BsmIvHandler(BaseHandler):
         days = int(data.get('days', '0'))
         dividend = float(data.get('dividend', '0'))
         ret = safe_call(self.ctx().bsm_iv, optionType, objectPrices, strikePrice, optionPrice, riskFree, days, dividend)
-        self.write(json.dumps({"iv": ret}, ensure_ascii=False))
+        self.write(json.dumps({"iv": ret}, ensure_ascii=True))
 
 # ContextInfo.get_local_data() - 从本地获取行情数据
 class LocalDataHandler(BaseHandler):
@@ -1257,9 +1314,9 @@ class LocalDataHandler(BaseHandler):
         count = int(data.get('count', '-1'))
         ret = safe_call(self.ctx().get_local_data, stock_code, start_time, end_time, period, divid_type, count)
         if ret is None:
-            self.write(json.dumps({"error": "获取本地行情失败"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "获取本地行情失败"}, ensure_ascii=True))
             return
-        self.write(json.dumps({"data": ret}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"data": ret}, ensure_ascii=True, default=str))
 
 # ContextInfo.subscribe_quote() - 订阅行情数据（带回调缓存）
 class SubscribeQuoteHandler(BaseHandler):
@@ -1282,7 +1339,7 @@ class SubscribeQuoteHandler(BaseHandler):
                         len(tick_data), list(tick_data.keys())[:5]))
             except Exception as e:
                 logger.info("subscribe_quote 初始数据填充失败: {}".format(e))
-        self.write(json.dumps({"status": "success" if ret is not None else "failed", "sub_id": ret}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success" if ret is not None else "failed", "sub_id": ret}, ensure_ascii=True))
 
 # ContextInfo.unsubscribe_quote() - 反订阅行情数据
 class UnsubscribeQuoteHandler(BaseHandler):
@@ -1290,7 +1347,7 @@ class UnsubscribeQuoteHandler(BaseHandler):
         data = json.loads(self.request.body)
         sub_id = int(data.get('sub_id', '0'))
         safe_call(self.ctx().unsubscribe_quote, sub_id)
-        self.write(json.dumps({"status": "success", "sub_id": sub_id}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success", "sub_id": sub_id}, ensure_ascii=True))
 
 # ContextInfo.get_close_price() - 获取指定时间的收盘价
 # QMT签名: get_close_price(market, stockCode, realTimetag, period=86400000, dividType=0)
@@ -1308,7 +1365,7 @@ class ClosePriceHandler(BaseHandler):
         period_ms = int(data.get('period_ms', 86400000))
         divid_type = int(data.get('divid_type', '0'))
         ret = safe_call(self.ctx().get_close_price, market, code, timetag, period_ms, divid_type)
-        self.write(safe_json_dumps({"stockcode": stockcode, "period": period, "timetag": timetag, "close_price": ret}, ensure_ascii=False))
+        self.write(safe_json_dumps({"stockcode": stockcode, "period": period, "timetag": timetag, "close_price": ret}, ensure_ascii=True))
 
 # ContextInfo.get_close_price_by_date() - 获取指定日期的收盘价
 # QMT原生无此方法，用 get_market_data 实现
@@ -1334,7 +1391,7 @@ class ClosePriceByDateHandler(BaseHandler):
                     close_price = float(ret_data.iloc[0])
             elif isinstance(ret_data, (int, float)):
                 close_price = float(ret_data)
-        self.write(safe_json_dumps({"stockcode": stockcode, "period": period, "strdate": strdate, "close_price": close_price}, ensure_ascii=False))
+        self.write(safe_json_dumps({"stockcode": stockcode, "period": period, "strdate": strdate, "close_price": close_price}, ensure_ascii=True))
 
 # ContextInfo.subscribe_whole_quote() - 订阅全推行情（带回调缓存）
 class SubscribeWholeQuoteHandler(BaseHandler):
@@ -1342,7 +1399,7 @@ class SubscribeWholeQuoteHandler(BaseHandler):
         data = json.loads(self.request.body)
         code_list = data.get('code_list', '')
         if not code_list:
-            self.write(json.dumps({"error": "need args code_list"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "need args code_list"}, ensure_ascii=True))
             return
         codes = [s.strip() for s in code_list.split(',')]
         ret = safe_call(self.ctx().subscribe_whole_quote, codes, _whole_quote_callback)
@@ -1356,17 +1413,43 @@ class SubscribeWholeQuoteHandler(BaseHandler):
                     len(tick_data), list(tick_data.keys())[:5]))
         except Exception as e:
             logger.info("subscribe_whole_quote 初始数据填充失败: {}".format(e))
-        self.write(json.dumps({"status": "success" if ret is not None else "failed", "sub_id": ret}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success" if ret is not None else "failed", "sub_id": ret}, ensure_ascii=True))
 
 # 获取订阅缓存的全推行情数据
 class SubTickCacheHandler(BaseHandler):
     def get(self):
-        self.write(safe_json_dumps({"data": _sub_tick_cache}, ensure_ascii=False))
+        global _sub_tick_cache
+        try:
+            if _sub_tick_cache:
+                codes = list(_sub_tick_cache.keys())
+                tick_data = self.ctx().get_full_tick(codes)
+                if tick_data and isinstance(tick_data, dict):
+                    result = {}
+                    for code, tick in tick_data.items():
+                        result[str(code)] = _extract_attrs(tick)
+                    self.write(safe_json_dumps({"data": result}, ensure_ascii=True))
+                    return
+        except Exception as e:
+            logger.info("[SubTickCache] get_full_tick获取失败: {}".format(e))
+        self.write(safe_json_dumps({"data": _sub_tick_cache}, ensure_ascii=True))
 
 # 获取订阅缓存的行情数据
 class SubQuoteCacheHandler(BaseHandler):
     def get(self):
-        self.write(safe_json_dumps({"data": _sub_quote_cache}, ensure_ascii=False))
+        global _sub_quote_cache
+        try:
+            if _sub_quote_cache:
+                codes = list(_sub_quote_cache.keys())
+                tick_data = self.ctx().get_full_tick(codes)
+                if tick_data and isinstance(tick_data, dict):
+                    result = {}
+                    for code, tick in tick_data.items():
+                        result[str(code)] = _extract_attrs(tick)
+                    self.write(safe_json_dumps({"data": result}, ensure_ascii=True))
+                    return
+        except Exception as e:
+            logger.info("[SubQuoteCache] get_full_tick获取失败: {}".format(e))
+        self.write(safe_json_dumps({"data": _sub_quote_cache}, ensure_ascii=True))
 
 # ContextInfo.set_universe() - 设置股票池
 class SetUniverseHandler(BaseHandler):
@@ -1374,11 +1457,11 @@ class SetUniverseHandler(BaseHandler):
         data = json.loads(self.request.body)
         stock_list = data.get('stock_list', '')
         if not stock_list:
-            self.write(json.dumps({"error": "need args stock_list"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "need args stock_list"}, ensure_ascii=True))
             return
         stocks = [s.strip() for s in stock_list.split(',')]
         safe_call(self.ctx().set_universe, stocks)
-        self.write(json.dumps({"status": "success", "stock_list": stocks}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success", "stock_list": stocks}, ensure_ascii=True))
 
 # ContextInfo.set_account() - 设置账号
 class SetAccountHandler(BaseHandler):
@@ -1386,10 +1469,10 @@ class SetAccountHandler(BaseHandler):
         data = json.loads(self.request.body)
         accountid = data.get('accountid', '')
         if not accountid:
-            self.write(json.dumps({"error": "need args accountid"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "need args accountid"}, ensure_ascii=True))
             return
         safe_call(self.ctx().set_account, accountid)
-        self.write(json.dumps({"status": "success", "accountid": accountid}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success", "accountid": accountid}, ensure_ascii=True))
 
 # download_history_data() - 下载历史数据到本地
 class DownloadHistoryDataHandler(BaseHandler):
@@ -1400,10 +1483,10 @@ class DownloadHistoryDataHandler(BaseHandler):
         start_time = data.get('start_time', '')
         end_time = data.get('end_time', '')
         if not stockcode:
-            self.write(json.dumps({"error": "need args stockcode"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "need args stockcode"}, ensure_ascii=True))
             return
         ret = safe_call(download_history_data, stockcode, period, start_time, end_time)
-        self.write(json.dumps({"status": "success", "stockcode": stockcode, "result": ret}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success", "stockcode": stockcode, "result": ret}, ensure_ascii=True))
 
 # ContextInfo.set_output_index_property() - 设置指标输出属性
 class SetOutputIndexPropertyHandler(BaseHandler):
@@ -1416,7 +1499,7 @@ class SetOutputIndexPropertyHandler(BaseHandler):
         nodraw = data.get('nodraw', False)
         noshow = data.get('noshow', False)
         safe_call(self.ctx().set_output_index_property, index_name, draw_style, color, noaxis, nodraw, noshow)
-        self.write(json.dumps({"status": "success", "index_name": index_name}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success", "index_name": index_name}, ensure_ascii=True))
 
 
 # ============= 3. 判定函数 (is_*) =============
@@ -1424,13 +1507,13 @@ class SetOutputIndexPropertyHandler(BaseHandler):
 class IsLastBarHandler(BaseHandler):
     def get(self):
         ret = safe_call(self.ctx().is_last_bar)
-        self.write(json.dumps({"is_last_bar": ret}, ensure_ascii=False))
+        self.write(json.dumps({"is_last_bar": ret}, ensure_ascii=True))
 
 # ContextInfo.is_new_bar() - 判定是否为新的K线
 class IsNewBarHandler(BaseHandler):
     def get(self):
         ret = safe_call(self.ctx().is_new_bar)
-        self.write(json.dumps({"is_new_bar": ret}, ensure_ascii=False))
+        self.write(json.dumps({"is_new_bar": ret}, ensure_ascii=True))
 
 # ContextInfo.is_suspended_stock() - 判定股票是否停牌
 class IsSuspendedStockHandler(BaseHandler):
@@ -1438,7 +1521,7 @@ class IsSuspendedStockHandler(BaseHandler):
         data = json.loads(self.request.body)
         stockcode = data.get('stockcode', '')
         ret = safe_call(self.ctx().is_suspended_stock, stockcode)
-        self.write(json.dumps({"stockcode": stockcode, "is_suspended": ret}, ensure_ascii=False))
+        self.write(json.dumps({"stockcode": stockcode, "is_suspended": ret}, ensure_ascii=True))
 
 # is_sector_stock() - 判定股票是否在指定板块中
 class IsSectorStockHandler(BaseHandler):
@@ -1448,7 +1531,7 @@ class IsSectorStockHandler(BaseHandler):
         market = data.get('market', '')
         stockcode = data.get('stockcode', '')
         ret = safe_call(is_sector_stock, sectorname, market, stockcode)
-        self.write(json.dumps({"sectorname": sectorname, "stockcode": stockcode, "is_in_sector": ret}, ensure_ascii=False))
+        self.write(json.dumps({"sectorname": sectorname, "stockcode": stockcode, "is_in_sector": ret}, ensure_ascii=True))
 
 # is_typed_stock() - 判定股票是否属于某个类别
 class IsTypedStockHandler(BaseHandler):
@@ -1458,7 +1541,7 @@ class IsTypedStockHandler(BaseHandler):
         market = data.get('market', '')
         stockcode = data.get('stockcode', '')
         ret = safe_call(is_typed_stock, stocktypenum, market, stockcode)
-        self.write(json.dumps({"stocktypenum": stocktypenum, "stockcode": stockcode, "result": ret}, ensure_ascii=False))
+        self.write(json.dumps({"stocktypenum": stocktypenum, "stockcode": stockcode, "result": ret}, ensure_ascii=True))
 
 # get_industry_name_of_stock() - 获取股票行业分类名称
 class GetIndustryNameOfStockHandler(BaseHandler):
@@ -1467,7 +1550,7 @@ class GetIndustryNameOfStockHandler(BaseHandler):
         industryType = data.get('industryType', '')
         stockcode = data.get('stockcode', '')
         ret = safe_call(get_industry_name_of_stock, industryType, stockcode)
-        self.write(json.dumps({"industryType": industryType, "stockcode": stockcode, "industry_name": ret}, ensure_ascii=False))
+        self.write(json.dumps({"industryType": industryType, "stockcode": stockcode, "industry_name": ret}, ensure_ascii=True))
 
 
 # ============= 4. 交易函数 =============
@@ -1483,34 +1566,61 @@ class PassorderHandler(BaseHandler):
             price = float(data['price'])
             volume = int(data['volume'])
             quickTrade = int(data.get('quickTrade', 2))
+            logger.info("[Passorder] opType={}, orderType={}, stock={}, prType={}, price={}, volume={}, quickTrade={}".format(
+                opType, orderType, stock, pr_type, price, volume, quickTrade))
+            before_ids = self._collect_order_ids()
             order_ref = passorder(opType, orderType, self.acc(), stock, pr_type, price, volume, 'qmt', quickTrade, self.ctx())
+            logger.info("[Passorder] 返回: type={}, repr={}".format(
+                type(order_ref).__name__, repr(order_ref)[:200] if order_ref is not None else 'None'))
+            ref_str = str(order_ref) if order_ref is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                logger.info("[Passorder] 未直接返回订单号，尝试查询确认委托")
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
             self.write(json.dumps({
                 "status": "success",
                 "opType": opType,
                 "stock": stock,
-                "order_ref": str(order_ref) if order_ref else "unknown"
-            }, ensure_ascii=False))
+                "order_ref": ref_str if ref_str else "unknown"
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("passorder下单异常")
-            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # algo_passorder() - 算法交易下单
 class AlgoPassorderHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
+            stock = data['stock']
+            before_ids = self._collect_order_ids()
             order_ref = algo_passorder(
                 int(data['opType']), int(data.get('orderType', 1101)),
-                self.acc(), data['stock'], int(data.get('prType', -1)),
+                self.acc(), stock, int(data.get('prType', -1)),
                 float(data['price']), int(data['volume']),
                 data.get('strategyName', ''), int(data.get('quickTrade', 2)),
                 data.get('userOrderId', ''), data.get('userOrderParam', {}),
                 self.ctx()
             )
-            self.write(json.dumps({"status": "success", "order_ref": str(order_ref) if order_ref else "unknown"}, ensure_ascii=False))
+            logger.info("[AlgoPassorder] 返回: type={}, repr={}".format(
+                type(order_ref).__name__ if order_ref is not None else 'None',
+                repr(order_ref)[:200] if order_ref is not None else 'None'))
+            ref_str = str(order_ref) if order_ref is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
+                else:
+                    self.write(json.dumps({
+                        "status": "warning", "order_ref": "",
+                        "message": "算法下单未返回委托，可能不支持或handlebar上下文缺失"
+                    }, ensure_ascii=True))
+                    return
+            self.write(json.dumps({"status": "success", "order_ref": ref_str if ref_str else "unknown"}, ensure_ascii=True))
         except Exception as e:
             logger.exception("algo_passorder异常")
-            self.write(json.dumps({"status": "error", "message": "算法下单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "算法下单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # smart_algo_passorder() - 智能算法交易下单
 # 官方签名: smart_algo_passorder(opType, orderType, accountid, orderCode, prType, price,
@@ -1522,7 +1632,7 @@ class SmartAlgoPassorderHandler(BaseHandler):
             # 判断smart_algo_passorder是全局函数还是ContextInfo方法
             func = globals().get('smart_algo_passorder') or getattr(self.ctx(), 'smart_algo_passorder', None)
             if func is None:
-                self.write(json.dumps({"status": "error", "message": "当前QMT版本不支持smart_algo_passorder（智能算法交易）"}, ensure_ascii=False))
+                self.write(json.dumps({"status": "error", "message": "当前QMT版本不支持smart_algo_passorder（智能算法交易）"}, ensure_ascii=True))
                 return
             data = json.loads(self.request.body)
             order_ref = func(
@@ -1545,82 +1655,211 @@ class SmartAlgoPassorderHandler(BaseHandler):
                 data.get('limitControl', 0),                  # limitControl (可选)
                 self.ctx()                                    # ContextInfo
             )
-            self.write(json.dumps({"status": "success", "order_ref": str(order_ref) if order_ref else "unknown"}, ensure_ascii=False))
+            logger.info("[SmartAlgoPassorder] 返回: type={}, repr={}".format(
+                type(order_ref).__name__ if order_ref is not None else 'None',
+                repr(order_ref)[:200] if order_ref is not None else 'None'))
+            ref_str = str(order_ref) if order_ref is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                self.write(json.dumps({
+                    "status": "warning", "order_ref": ref_str,
+                    "message": "智能算法下单未返回有效委托，可能不支持或需要轮询"
+                }, ensure_ascii=True))
+                return
+            self.write(json.dumps({"status": "success", "order_ref": ref_str}, ensure_ascii=True))
         except Exception as e:
             logger.exception("smart_algo_passorder异常")
-            self.write(json.dumps({"status": "error", "message": "智能算法下单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "智能算法下单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # order_lots() - 指定手数交易
 class OrderLotsHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            order_lots(data['stock'], int(data['lots']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            logger.info("[OrderLots] stock={}, lots={}, style={}, price={}".format(
+                stock, data['lots'], data.get('style', 'LATEST'), data.get('price', 0)))
+            before_ids = self._collect_order_ids()
+            ret = order_lots(stock, int(data['lots']), data.get('style', 'LATEST'),
                        float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "order_lots", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[OrderLots] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
+                    logger.info("[OrderLots] 委托确认成功, ref={}".format(ref_str))
+                else:
+                    logger.warning("[OrderLots] 委托未生效，下单可能失败")
+                    self.write(json.dumps({
+                        "status": "error", "action": "order_lots", "stock": stock,
+                        "message": "下单未返回委托，可能需要在handlebar上下文中调用"
+                    }, ensure_ascii=True))
+                    return
+            self.write(json.dumps({
+                "status": "success", "action": "order_lots", "stock": stock,
+                "order_ref": ref_str if ref_str else "unknown"
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("order_lots异常")
-            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # order_value() - 指定价值交易
 class OrderValueHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            order_value(data['stock'], float(data['value']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            logger.info("[OrderValue] stock={}, value={}".format(stock, data['value']))
+            before_ids = self._collect_order_ids()
+            ret = order_value(stock, float(data['value']), data.get('style', 'LATEST'),
                         float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "order_value", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[OrderValue] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
+                    logger.info("[OrderValue] 委托确认成功, ref={}".format(ref_str))
+                else:
+                    logger.warning("[OrderValue] 委托未生效，下单可能失败")
+                    self.write(json.dumps({
+                        "status": "error", "action": "order_value", "stock": stock,
+                        "message": "下单未返回委托，可能需要在handlebar上下文中调用"
+                    }, ensure_ascii=True))
+                    return
+            self.write(json.dumps({
+                "status": "success", "action": "order_value", "stock": stock,
+                "order_ref": ref_str if ref_str else "unknown"
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("order_value异常")
-            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # order_percent() - 指定比例交易
 class OrderPercentHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            order_percent(data['stock'], float(data['percent']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            before_ids = self._collect_order_ids()
+            ret = order_percent(stock, float(data['percent']), data.get('style', 'LATEST'),
                           float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "order_percent", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[OrderPercent] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
+                else:
+                    logger.warning("[OrderPercent] 委托未生效，下单可能失败")
+                    self.write(json.dumps({
+                        "status": "error", "action": "order_percent", "stock": stock,
+                        "message": "下单未返回委托，可能需要在handlebar上下文中调用"
+                    }, ensure_ascii=True))
+                    return
+            self.write(json.dumps({
+                "status": "success", "action": "order_percent", "stock": stock,
+                "order_ref": ref_str if ref_str else "unknown"
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("order_percent异常")
-            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # order_target_value() - 指定目标价值交易
 class OrderTargetValueHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            order_target_value(data['stock'], float(data['tar_value']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            before_ids = self._collect_order_ids()
+            ret = order_target_value(stock, float(data['tar_value']), data.get('style', 'LATEST'),
                                float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "order_target_value", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[OrderTargetValue] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
+                else:
+                    logger.warning("[OrderTargetValue] 委托未生效，下单可能失败")
+                    self.write(json.dumps({
+                        "status": "error", "action": "order_target_value", "stock": stock,
+                        "message": "下单未返回委托，可能需要在handlebar上下文中调用"
+                    }, ensure_ascii=True))
+                    return
+            self.write(json.dumps({
+                "status": "success", "action": "order_target_value", "stock": stock,
+                "order_ref": ref_str if ref_str else "unknown"
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("order_target_value异常")
-            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # order_target_percent() - 指定目标比例交易
 class OrderTargetPercentHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            order_target_percent(data['stock'], float(data['tar_percent']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            before_ids = self._collect_order_ids()
+            ret = order_target_percent(stock, float(data['tar_percent']), data.get('style', 'LATEST'),
                                  float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "order_target_percent", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[OrderTargetPercent] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
+                else:
+                    logger.warning("[OrderTargetPercent] 委托未生效，下单可能失败")
+                    self.write(json.dumps({
+                        "status": "error", "action": "order_target_percent", "stock": stock,
+                        "message": "下单未返回委托，可能需要在handlebar上下文中调用"
+                    }, ensure_ascii=True))
+                    return
+            self.write(json.dumps({
+                "status": "success", "action": "order_target_percent", "stock": stock,
+                "order_ref": ref_str if ref_str else "unknown"
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("order_target_percent异常")
-            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # order_shares() - 指定股数交易
 class OrderSharesHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            order_shares(data['stock'], int(data['shares']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            before_ids = self._collect_order_ids()
+            ret = order_shares(stock, int(data['shares']), data.get('style', 'LATEST'),
                          float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "order_shares", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[OrderShares] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
+                else:
+                    logger.warning("[OrderShares] 委托未生效，下单可能失败")
+                    self.write(json.dumps({
+                        "status": "error", "action": "order_shares", "stock": stock,
+                        "message": "下单未返回委托，可能需要在handlebar上下文中调用"
+                    }, ensure_ascii=True))
+                    return
+            self.write(json.dumps({
+                "status": "success", "action": "order_shares", "stock": stock,
+                "order_ref": ref_str if ref_str else "unknown"
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("order_shares异常")
-            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=True))
 
 
 # ============= 5. 期货交易 =============
@@ -1629,72 +1868,143 @@ class FuturesBuyOpenHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            buy_open(data['stock'], int(data['amount']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            before_ids = self._collect_order_ids()
+            ret = buy_open(stock, int(data['amount']), data.get('style', 'LATEST'),
                      float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "buy_open", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[FuturesBuyOpen] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
+                else:
+                    # 在期货账户用期货账户下单，默认失败，返回warning而非error
+                    self.write(json.dumps({
+                        "status": "warning", "action": "buy_open", "stock": stock,
+                        "order_ref": "",
+                        "message": "下单未返回委托，请确认期货账户是否handlebar上下文缺失"
+                    }, ensure_ascii=True))
+                    return
+            self.write(json.dumps({
+                "status": "success", "action": "buy_open", "stock": stock,
+                "order_ref": ref_str if ref_str else "unknown"
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("buy_open异常")
-            self.write(json.dumps({"status": "error", "message": "期货买入开仓失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "期货买入开仓失败: {}".format(str(e))}, ensure_ascii=True))
 
 # buy_close_tdayfirst() - 期货买入平仓(平今优先)
 class FuturesBuyCloseTdayFirstHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            buy_close_tdayfirst(data['stock'], int(data['amount']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            ret = buy_close_tdayfirst(stock, int(data['amount']), data.get('style', 'LATEST'),
                                 float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "buy_close_tdayfirst", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[FuturesBuyCloseTdayFirst] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            self.write(json.dumps({
+                "status": "success" if ref_str and ref_str != "None" and ref_str != "0" else "warning",
+                "action": "buy_close_tdayfirst", "stock": stock,
+                "order_ref": ref_str if ref_str and ref_str != "None" else ""
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("buy_close_tdayfirst异常")
-            self.write(json.dumps({"status": "error", "message": "期货买入平仓(平今)失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "期货买入平仓(平今)失败: {}".format(str(e))}, ensure_ascii=True))
 
 # buy_close_ydayfirst() - 期货买入平仓(平昨优先)
 class FuturesBuyCloseYdayFirstHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            buy_close_ydayfirst(data['stock'], int(data['amount']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            ret = buy_close_ydayfirst(stock, int(data['amount']), data.get('style', 'LATEST'),
                                 float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "buy_close_ydayfirst", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[FuturesBuyCloseYdayFirst] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            self.write(json.dumps({
+                "status": "success" if ref_str and ref_str != "None" and ref_str != "0" else "warning",
+                "action": "buy_close_ydayfirst", "stock": stock,
+                "order_ref": ref_str if ref_str and ref_str != "None" else ""
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("buy_close_ydayfirst异常")
-            self.write(json.dumps({"status": "error", "message": "期货买入平仓(平昨)失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "期货买入平仓(平昨)失败: {}".format(str(e))}, ensure_ascii=True))
 
 # sell_open() - 期货卖出开仓
 class FuturesSellOpenHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            sell_open(data['stock'], int(data['amount']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            before_ids = self._collect_order_ids()
+            ret = sell_open(stock, int(data['amount']), data.get('style', 'LATEST'),
                       float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "sell_open", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[FuturesSellOpen] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
+                else:
+                    self.write(json.dumps({
+                        "status": "warning", "action": "sell_open", "stock": stock,
+                        "order_ref": "",
+                        "message": "下单未返回委托，请确认期货账户是否handlebar上下文缺失"
+                    }, ensure_ascii=True))
+                    return
+            self.write(json.dumps({
+                "status": "success", "action": "sell_open", "stock": stock,
+                "order_ref": ref_str if ref_str else "unknown"
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("sell_open异常")
-            self.write(json.dumps({"status": "error", "message": "期货卖出开仓失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "期货卖出开仓失败: {}".format(str(e))}, ensure_ascii=True))
 
 # sell_close_tdayfirst() - 期货卖出平仓(平今优先)
 class FuturesSellCloseTdayFirstHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            sell_close_tdayfirst(data['stock'], int(data['amount']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            ret = sell_close_tdayfirst(stock, int(data['amount']), data.get('style', 'LATEST'),
                                  float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "sell_close_tdayfirst", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[FuturesSellCloseTdayFirst] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            self.write(json.dumps({
+                "status": "success" if ref_str and ref_str != "None" and ref_str != "0" else "warning",
+                "action": "sell_close_tdayfirst", "stock": stock,
+                "order_ref": ref_str if ref_str and ref_str != "None" else ""
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("sell_close_tdayfirst异常")
-            self.write(json.dumps({"status": "error", "message": "期货卖出平仓(平今)失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "期货卖出平仓(平今)失败: {}".format(str(e))}, ensure_ascii=True))
 
 # sell_close_ydayfirst() - 期货卖出平仓(平昨优先)
 class FuturesSellCloseYdayFirstHandler(BaseHandler):
     def post(self):
         try:
             data = json.loads(self.request.body)
-            sell_close_ydayfirst(data['stock'], int(data['amount']), data.get('style', 'LATEST'),
+            stock = data['stock']
+            ret = sell_close_ydayfirst(stock, int(data['amount']), data.get('style', 'LATEST'),
                                  float(data.get('price', 0)), self.ctx(), data.get('accId', self.acc()))
-            self.write(json.dumps({"status": "success", "action": "sell_close_ydayfirst", "stock": data['stock']}, ensure_ascii=False))
+            logger.info("[FuturesSellCloseYdayFirst] 返回: type={}, repr={}".format(
+                type(ret).__name__ if ret is not None else 'None', repr(ret)[:200] if ret is not None else 'None'))
+            ref_str = str(ret) if ret is not None else ""
+            self.write(json.dumps({
+                "status": "success" if ref_str and ref_str != "None" and ref_str != "0" else "warning",
+                "action": "sell_close_ydayfirst", "stock": stock,
+                "order_ref": ref_str if ref_str and ref_str != "None" else ""
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("sell_close_ydayfirst异常")
-            self.write(json.dumps({"status": "error", "message": "期货卖出平仓(平昨)失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "期货卖出平仓(平昨)失败: {}".format(str(e))}, ensure_ascii=True))
 
 
 # ============= 6. 任务管理 =============
@@ -1706,10 +2016,10 @@ class CancelTaskHandler(BaseHandler):
             taskId = data['taskId']
             accountType = data.get('accountType', 'stock')
             ret = cancel_task(taskId, self.acc(), accountType, self.ctx())
-            self.write(json.dumps({"status": "success" if ret else "failed", "taskId": taskId}, ensure_ascii=False))
+            self.write(json.dumps({"status": "success" if ret else "failed", "taskId": taskId}, ensure_ascii=True))
         except Exception as e:
             logger.exception("cancel_task异常")
-            self.write(json.dumps({"status": "error", "message": "撤销任务失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "撤销任务失败: {}".format(str(e))}, ensure_ascii=True))
 
 # pause_task() - 暂停任务
 class PauseTaskHandler(BaseHandler):
@@ -1719,10 +2029,10 @@ class PauseTaskHandler(BaseHandler):
             taskId = data['taskId']
             accountType = data.get('accountType', 'stock')
             ret = pause_task(taskId, self.acc(), accountType, self.ctx())
-            self.write(json.dumps({"status": "success" if ret else "failed", "taskId": taskId}, ensure_ascii=False))
+            self.write(json.dumps({"status": "success" if ret else "failed", "taskId": taskId}, ensure_ascii=True))
         except Exception as e:
             logger.exception("pause_task异常")
-            self.write(json.dumps({"status": "error", "message": "暂停任务失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "暂停任务失败: {}".format(str(e))}, ensure_ascii=True))
 
 # resume_task() - 继续任务
 class ResumeTaskHandler(BaseHandler):
@@ -1732,20 +2042,20 @@ class ResumeTaskHandler(BaseHandler):
             taskId = data['taskId']
             accountType = data.get('accountType', 'stock')
             ret = resume_task(taskId, self.acc(), accountType, self.ctx())
-            self.write(json.dumps({"status": "success" if ret else "failed", "taskId": taskId}, ensure_ascii=False))
+            self.write(json.dumps({"status": "success" if ret else "failed", "taskId": taskId}, ensure_ascii=True))
         except Exception as e:
             logger.exception("resume_task异常")
-            self.write(json.dumps({"status": "error", "message": "继续任务失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "继续任务失败: {}".format(str(e))}, ensure_ascii=True))
 
 # do_order() - 实时触发前一根bar信号函数
 class DoOrderHandler(BaseHandler):
     def post(self):
         try:
             do_order(self.ctx())
-            self.write(json.dumps({"status": "success", "message": "信号已触发"}, ensure_ascii=False))
+            self.write(json.dumps({"status": "success", "message": "信号已触发"}, ensure_ascii=True))
         except Exception as e:
             logger.exception("do_order异常")
-            self.write(json.dumps({"status": "error", "message": "触发信号失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "触发信号失败: {}".format(str(e))}, ensure_ascii=True))
 
 
 # ============= 7. 账户/订单查询 =============
@@ -1759,7 +2069,7 @@ class TradeDetailDataHandler(BaseHandler):
         if ret is None:
             ret = []
         result = [_extract_attrs(obj) for obj in ret]
-        self.write(safe_json_dumps({"data": result}, ensure_ascii=False))
+        self.write(safe_json_dumps({"data": result}, ensure_ascii=True))
 
 # get_value_by_order_id() - 根据委托号获取委托/成交信息
 class ValueByOrderIdHandler(BaseHandler):
@@ -1770,9 +2080,9 @@ class ValueByOrderIdHandler(BaseHandler):
         datatype = data.get('datatype', 'ORDER')
         ret = safe_call(get_value_by_order_id, orderId, self.acc(), accountType, datatype)
         if ret:
-            self.write(safe_json_dumps({"orderId": orderId, "data": _extract_attrs(ret)}, ensure_ascii=False))
+            self.write(safe_json_dumps({"orderId": orderId, "data": _extract_attrs(ret)}, ensure_ascii=True))
         else:
-            self.write(json.dumps({"orderId": orderId, "data": {}}, ensure_ascii=False))
+            self.write(json.dumps({"orderId": orderId, "data": {}}, ensure_ascii=True))
 
 # get_last_order_id() - 获取最新委托/成交的委托号
 class LastOrderIdHandler(BaseHandler):
@@ -1781,7 +2091,7 @@ class LastOrderIdHandler(BaseHandler):
         account = data.get('account', 'stock')
         datatype = data.get('datatype', 'ORDER')
         ret = safe_call(get_last_order_id, self.acc(), account, datatype, 'qmt')
-        self.write(json.dumps({"last_order_id": ret}, ensure_ascii=False))
+        self.write(json.dumps({"last_order_id": ret}, ensure_ascii=True))
 
 # can_cancel_order() - 查询委托是否可撤销
 class CanCancelOrderHandler(BaseHandler):
@@ -1790,7 +2100,7 @@ class CanCancelOrderHandler(BaseHandler):
         orderId = data.get('orderId', '')
         accountType = data.get('accountType', 'stock')
         ret = safe_call(can_cancel_order, orderId, self.acc(), accountType)
-        self.write(json.dumps({"orderId": orderId, "can_cancel": ret}, ensure_ascii=False))
+        self.write(json.dumps({"orderId": orderId, "can_cancel": ret}, ensure_ascii=True))
 
 # get_debt_contract() - 获取两融负债合约明细
 class DebtContractHandler(BaseHandler):
@@ -1799,7 +2109,7 @@ class DebtContractHandler(BaseHandler):
         accId = data.get('accId', self.acc())
         ret = safe_call(get_debt_contract, accId)
         result = [_extract_attrs(obj) for obj in (ret or [])]
-        self.write(safe_json_dumps({"data": result}, ensure_ascii=False))
+        self.write(safe_json_dumps({"data": result}, ensure_ascii=True))
 
 # get_assure_contract() - 获取两融担保标的明细
 class AssureContractHandler(BaseHandler):
@@ -1808,7 +2118,7 @@ class AssureContractHandler(BaseHandler):
         accId = data.get('accId', self.acc())
         ret = safe_call(get_assure_contract, accId)
         result = [_extract_attrs(obj) for obj in (ret or [])]
-        self.write(safe_json_dumps({"data": result}, ensure_ascii=False))
+        self.write(safe_json_dumps({"data": result}, ensure_ascii=True))
 
 # get_enable_short_contract() - 获取可融券明细
 class EnableShortContractHandler(BaseHandler):
@@ -1817,7 +2127,7 @@ class EnableShortContractHandler(BaseHandler):
         accId = data.get('accId', self.acc())
         ret = safe_call(get_enable_short_contract, accId)
         result = [_extract_attrs(obj) for obj in (ret or [])]
-        self.write(safe_json_dumps({"data": result}, ensure_ascii=False))
+        self.write(safe_json_dumps({"data": result}, ensure_ascii=True))
 
 # get_ipo_data() - 获取当日新股新债信息
 class IpoDataHandler(BaseHandler):
@@ -1825,7 +2135,7 @@ class IpoDataHandler(BaseHandler):
         data = json.loads(self.request.body)
         typ = data.get('type', '')
         ret = safe_call(get_ipo_data, typ)
-        self.write(json.dumps({"data": ret or {}}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"data": ret or {}}, ensure_ascii=True, default=str))
 
 # get_new_purchase_limit() - 获取新股申购额度
 class NewPurchaseLimitHandler(BaseHandler):
@@ -1833,7 +2143,7 @@ class NewPurchaseLimitHandler(BaseHandler):
         data = json.loads(self.request.body)
         accid = data.get('accid', self.acc())
         ret = safe_call(get_new_purchase_limit, accid)
-        self.write(json.dumps({"data": ret or {}}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"data": ret or {}}, ensure_ascii=True, default=str))
 
 # cancel() - 单笔撤单
 class CancelOrderHandler(BaseHandler):
@@ -1843,13 +2153,13 @@ class CancelOrderHandler(BaseHandler):
             orderId = data.get('orderId', '')
             accountType = data.get('accountType', 'stock')
             if not orderId:
-                self.write(json.dumps({"status": "error", "message": "need args orderId"}, ensure_ascii=False))
+                self.write(json.dumps({"status": "error", "message": "need args orderId"}, ensure_ascii=True))
                 return
             cancel(orderId, self.acc(), accountType, self.ctx())
-            self.write(json.dumps({"status": "success", "orderId": orderId}, ensure_ascii=False))
+            self.write(json.dumps({"status": "success", "orderId": orderId}, ensure_ascii=True))
         except Exception as e:
             logger.exception("cancel异常")
-            self.write(json.dumps({"status": "error", "message": "撤单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "撤单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # get_smart_algo_param() - 获取智能算法参数
 class SmartAlgoParamHandler(BaseHandler):
@@ -1863,7 +2173,7 @@ class SmartAlgoParamHandler(BaseHandler):
         ret = safe_call(get_smart_algo_param, algos)
         if hasattr(ret, 'to_dict'):
             ret = ret.to_dict()
-        self.write(json.dumps({"data": ret} if ret is not None else {"error": "获取智能算法参数失败"}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"data": ret} if ret is not None else {"error": "获取智能算法参数失败"}, ensure_ascii=True, default=str))
 
 # query_credit_account() - 查询两融账户（异步触发）
 class QueryCreditAccountHandler(BaseHandler):
@@ -1872,7 +2182,7 @@ class QueryCreditAccountHandler(BaseHandler):
         accid = data.get('accid', self.acc())
         seq = int(data.get('seq', '0'))
         ret = safe_call(query_credit_account, accid, seq)
-        self.write(json.dumps({"status": "submitted", "accid": accid, "seq": seq, "result": str(ret) if ret else "async"}, ensure_ascii=False))
+        self.write(json.dumps({"status": "submitted", "accid": accid, "seq": seq, "result": str(ret) if ret else "async"}, ensure_ascii=True))
 
 # query_credit_opvolume() - 查询两融最大可下单量（异步触发）
 class QueryCreditOpvolumeHandler(BaseHandler):
@@ -1885,7 +2195,7 @@ class QueryCreditOpvolumeHandler(BaseHandler):
         price = float(data.get('price', '0'))
         volume = int(data.get('volume', '0'))
         ret = safe_call(query_credit_opvolume, accid, seq, optype, code, price, volume)
-        self.write(json.dumps({"status": "submitted", "accid": accid, "seq": seq, "result": str(ret) if ret else "async"}, ensure_ascii=False))
+        self.write(json.dumps({"status": "submitted", "accid": accid, "seq": seq, "result": str(ret) if ret else "async"}, ensure_ascii=True))
 
 
 # ============= 8. 引用函数 (ext_data) =============
@@ -1902,10 +2212,10 @@ class ExtDataHandler(BaseHandler):
             if ret is not None and not isinstance(ret, (bool, int, float, str, list, dict)):
                 ret = str(ret)
             result = _clean_nan({"extdataname": extdataname, "stockcode": stockcode, "value": ret})
-            self.write(json.dumps(result, ensure_ascii=False))
+            self.write(json.dumps(result, ensure_ascii=True))
         except Exception as e:
             logger.exception("ext_data handler error")
-            self.write(json.dumps({"extdataname": "", "stockcode": "", "value": None, "error": str(e)}, ensure_ascii=False))
+            self.write(json.dumps({"extdataname": "", "stockcode": "", "value": None, "error": str(e)}, ensure_ascii=True))
 
 # ext_data_rank() - 获取扩展数据排名
 class ExtDataRankHandler(BaseHandler):
@@ -1915,7 +2225,7 @@ class ExtDataRankHandler(BaseHandler):
         stockcode = data.get('stockcode', '')
         deviation = int(data.get('deviation', '0'))
         ret = safe_call(ext_data_rank, extdataname, stockcode, deviation, self.ctx())
-        self.write(json.dumps({"extdataname": extdataname, "stockcode": stockcode, "rank": ret}, ensure_ascii=False))
+        self.write(json.dumps({"extdataname": extdataname, "stockcode": stockcode, "rank": ret}, ensure_ascii=True))
 
 # get_factor_value() - 获取因子数据
 class GetFactorValueHandler(BaseHandler):
@@ -1930,10 +2240,10 @@ class GetFactorValueHandler(BaseHandler):
             if ret is not None and not isinstance(ret, (bool, int, float, str, list, dict)):
                 ret = str(ret)
             result = _clean_nan({"factorname": factorname, "stockcode": stockcode, "value": ret})
-            self.write(json.dumps(result, ensure_ascii=False))
+            self.write(json.dumps(result, ensure_ascii=True))
         except Exception as e:
             logger.exception("get_factor_value handler error")
-            self.write(json.dumps({"factorname": "", "stockcode": "", "value": None, "error": str(e)}, ensure_ascii=False))
+            self.write(json.dumps({"factorname": "", "stockcode": "", "value": None, "error": str(e)}, ensure_ascii=True))
 
 # get_factor_rank() - 获取因子数据排名
 class GetFactorRankHandler(BaseHandler):
@@ -1943,7 +2253,7 @@ class GetFactorRankHandler(BaseHandler):
         stockcode = data.get('stockcode', '')
         deviation = int(data.get('deviation', '0'))
         ret = safe_call(get_factor_rank, factorname, stockcode, deviation, self.ctx())
-        self.write(json.dumps({"factorname": factorname, "stockcode": stockcode, "rank": ret}, ensure_ascii=False))
+        self.write(json.dumps({"factorname": factorname, "stockcode": stockcode, "rank": ret}, ensure_ascii=True))
 
 # ext_data_rank_range() - 获取扩展数据排名范围
 class ExtDataRankRangeHandler(BaseHandler):
@@ -1956,7 +2266,7 @@ class ExtDataRankRangeHandler(BaseHandler):
         ret = safe_call(ext_data_rank_range, extdataname, stockcode, begintime, endtime, self.ctx())
         if hasattr(ret, 'to_dict'):
             ret = ret.to_dict()
-        self.write(json.dumps({"extdataname": extdataname, "stockcode": stockcode, "data": ret}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"extdataname": extdataname, "stockcode": stockcode, "data": ret}, ensure_ascii=True, default=str))
 
 # ext_data_range() - 获取扩展数据值范围
 class ExtDataRangeHandler(BaseHandler):
@@ -1969,7 +2279,7 @@ class ExtDataRangeHandler(BaseHandler):
         ret = safe_call(ext_data_range, extdataname, stockcode, begintime, endtime, self.ctx())
         if hasattr(ret, 'to_dict'):
             ret = ret.to_dict()
-        self.write(json.dumps({"extdataname": extdataname, "stockcode": stockcode, "data": ret}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"extdataname": extdataname, "stockcode": stockcode, "data": ret}, ensure_ascii=True, default=str))
 
 
 # ============= 8.5 板块管理 =============
@@ -1981,10 +2291,10 @@ class CreateSectorHandler(BaseHandler):
         sector_name = data.get('sector_name', '')
         overwrite = data.get('overwrite', 'true').lower() == 'true'
         if not sector_name:
-            self.write(json.dumps({"status": "error", "message": "need args sector_name"}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "need args sector_name"}, ensure_ascii=True))
             return
         ret = safe_call(create_sector, parent_node, sector_name, overwrite)
-        self.write(json.dumps({"status": "success", "sector_name": sector_name, "result": ret}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success", "sector_name": sector_name, "result": ret}, ensure_ascii=True))
 
 # create_sector_folder() - 创建板块文件夹
 class CreateSectorFolderHandler(BaseHandler):
@@ -1994,10 +2304,10 @@ class CreateSectorFolderHandler(BaseHandler):
         folder_name = data.get('folder_name', '')
         overwrite = data.get('overwrite', 'true').lower() == 'true'
         if not folder_name:
-            self.write(json.dumps({"status": "error", "message": "need args folder_name"}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "need args folder_name"}, ensure_ascii=True))
             return
         ret = safe_call(create_sector_folder, parent_node, folder_name, overwrite)
-        self.write(json.dumps({"status": "success", "folder_name": folder_name, "result": ret}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success", "folder_name": folder_name, "result": ret}, ensure_ascii=True))
 
 # get_sector_list() - 获取板块目录
 class SectorListHandler(BaseHandler):
@@ -2005,7 +2315,7 @@ class SectorListHandler(BaseHandler):
         data = json.loads(self.request.body)
         node = data.get('node', '')
         ret = safe_call(get_sector_list, node)
-        self.write(json.dumps({"node": node, "data": ret or []}, ensure_ascii=False, default=str))
+        self.write(json.dumps({"node": node, "data": ret or []}, ensure_ascii=True, default=str))
 
 # reset_sector_stock_list() - 重置板块成分股
 class ResetSectorStockListHandler(BaseHandler):
@@ -2014,11 +2324,11 @@ class ResetSectorStockListHandler(BaseHandler):
         sector = data.get('sector', '')
         stock_list = data.get('stock_list', '')
         if not sector:
-            self.write(json.dumps({"error": "need args sector"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "need args sector"}, ensure_ascii=True))
             return
         stocks = [s.strip() for s in stock_list.split(',')] if stock_list else []
         ret = safe_call(reset_sector_stock_list, sector, stocks)
-        self.write(json.dumps({"status": "success" if ret else "failed", "sector": sector}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success" if ret else "failed", "sector": sector}, ensure_ascii=True))
 
 # add_stock_to_sector() - 添加股票到板块
 class AddStockToSectorHandler(BaseHandler):
@@ -2027,10 +2337,10 @@ class AddStockToSectorHandler(BaseHandler):
         sector = data.get('sector', '')
         stock_code = data.get('stock_code', '')
         if not sector or not stock_code:
-            self.write(json.dumps({"error": "need args sector and stock_code"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "need args sector and stock_code"}, ensure_ascii=True))
             return
         ret = safe_call(add_stock_to_sector, sector, stock_code)
-        self.write(json.dumps({"status": "success" if ret else "failed", "sector": sector, "stock_code": stock_code}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success" if ret else "failed", "sector": sector, "stock_code": stock_code}, ensure_ascii=True))
 
 # remove_stock_from_sector() - 从板块移除股票
 class RemoveStockFromSectorHandler(BaseHandler):
@@ -2039,10 +2349,10 @@ class RemoveStockFromSectorHandler(BaseHandler):
         sector = data.get('sector', '')
         stock_code = data.get('stock_code', '')
         if not sector or not stock_code:
-            self.write(json.dumps({"error": "need args sector and stock_code"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "need args sector and stock_code"}, ensure_ascii=True))
             return
         ret = safe_call(remove_stock_from_sector, sector, stock_code)
-        self.write(json.dumps({"status": "success" if ret else "failed", "sector": sector, "stock_code": stock_code}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success" if ret else "failed", "sector": sector, "stock_code": stock_code}, ensure_ascii=True))
 
 
 # ============= 9. 原有 Handler（保持兼容） =============
@@ -2073,7 +2383,7 @@ class HoldingHandler(BaseHandler):
                 'FutureTradeType': position.m_eFutureTradeType,
                 'ExpireDate': position.m_strExpireDate
             }
-        self.write(json.dumps(holding, ensure_ascii=False))
+        self.write(json.dumps(holding, ensure_ascii=True))
 
 # get_trade_detail_data('account') - 查询总资产
 class TotalMoneyHandler(BaseHandler):
@@ -2083,9 +2393,9 @@ class TotalMoneyHandler(BaseHandler):
         _data = safe_call(get_trade_detail_data, self.acc(), account, 'account')
         info = _data[0] if _data else None
         if not info:
-            self.write(json.dumps({"error": "资金数据获取失败"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "资金数据获取失败"}, ensure_ascii=True))
             return
-        self.write(json.dumps({"total_money": round(info.m_dBalance, 2)}, ensure_ascii=False))
+        self.write(json.dumps({"total_money": round(info.m_dBalance, 2)}, ensure_ascii=True))
 
 # get_trade_detail_data('account') - 查询可用资金
 class AvailableMoneyHandler(BaseHandler):
@@ -2095,9 +2405,9 @@ class AvailableMoneyHandler(BaseHandler):
         _data = safe_call(get_trade_detail_data, self.acc(), account, 'account')
         info = _data[0] if _data else None
         if not info:
-            self.write(json.dumps({"error": "资金数据获取失败"}, ensure_ascii=False))
+            self.write(json.dumps({"error": "资金数据获取失败"}, ensure_ascii=True))
             return
-        self.write(json.dumps({"available_money": round(info.m_dAvailable, 2)}, ensure_ascii=False))
+        self.write(json.dumps({"available_money": round(info.m_dAvailable, 2)}, ensure_ascii=True))
 
 # passorder(23) - 简化买入下单(封装passorder)
 class BuyHandler(BaseHandler):
@@ -2108,14 +2418,30 @@ class BuyHandler(BaseHandler):
             price = float(data['price'])
             volume = int(data['volume'])
             pr_type = data.get('prType', 11)
+            before_ids = self._collect_order_ids()
+            logger.info("[Buy] passorder(23, 1101, {}, {}, {}, {}, {}, 'qmt', 2)".format(
+                self.acc(), stock, pr_type, price, volume))
             order_ref = passorder(23, 1101, self.acc(), stock, pr_type, price, volume, 'qmt', 2, self.ctx())
+            logger.info("[Buy] passorder返回: type={}, repr={}".format(
+                type(order_ref).__name__, repr(order_ref)[:200] if order_ref is not None else 'None'))
+            # passorder可能返回None(异步下单)或订单号
+            ref_str = str(order_ref) if order_ref is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                # 异步下单未直接返回订单号，尝试查询确认委托
+                logger.info("[Buy] passorder未直接返回订单号，尝试查询确认委托")
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
+                    logger.info("[Buy] 委托确认成功, ref={}".format(ref_str))
+                else:
+                    ref_str = ""
             self.write(json.dumps({
                 "status": "success", "action": "buy", "stock": stock,
-                "order_ref": str(order_ref) if order_ref else "unknown"
-            }, ensure_ascii=False))
+                "order_ref": ref_str if ref_str else "unknown"
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("买入下单异常")
-            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # passorder(24) - 简化卖出下单(封装passorder)
 class SellHandler(BaseHandler):
@@ -2126,14 +2452,28 @@ class SellHandler(BaseHandler):
             price = float(data['price'])
             volume = int(data['volume'])
             pr_type = data.get('prType', 11)
+            before_ids = self._collect_order_ids()
+            logger.info("[Sell] passorder(24, 1101, {}, {}, {}, {}, {}, 'qmt', 2)".format(
+                self.acc(), stock, pr_type, price, volume))
             order_ref = passorder(24, 1101, self.acc(), stock, pr_type, price, volume, 'qmt', 2, self.ctx())
+            logger.info("[Sell] passorder返回: type={}, repr={}".format(
+                type(order_ref).__name__, repr(order_ref)[:200] if order_ref is not None else 'None'))
+            ref_str = str(order_ref) if order_ref is not None else ""
+            if not ref_str or ref_str == "None" or ref_str == "0" or ref_str == "-1":
+                logger.info("[Sell] passorder未直接返回订单号，尝试查询确认委托")
+                found, new_ref = self._find_new_order_ref(stock, before_ids)
+                if found:
+                    ref_str = new_ref
+                    logger.info("[Sell] 委托确认成功, ref={}".format(ref_str))
+                else:
+                    ref_str = ""
             self.write(json.dumps({
                 "status": "success", "action": "sell", "stock": stock,
-                "order_ref": str(order_ref) if order_ref else "unknown"
-            }, ensure_ascii=False))
+                "order_ref": ref_str if ref_str else "unknown"
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("卖出下单异常")
-            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "下单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # get_trade_detail_data('order') - 查询委托状态列表
 class OrderStatusHandler(BaseHandler):
@@ -2144,7 +2484,7 @@ class OrderStatusHandler(BaseHandler):
         rets = []
         for order in orders:
             rets.append(_extract_attrs(order))
-        self.write(safe_json_dumps({"orders": rets}, ensure_ascii=False))
+        self.write(safe_json_dumps({"orders": rets}, ensure_ascii=True))
 
 # cancel() - 全部撤单
 class CancelAllHandler(BaseHandler):
@@ -2166,10 +2506,10 @@ class CancelAllHandler(BaseHandler):
                 "status": "success",
                 "message": "已发出 {} 笔撤单请求".format(len(canceled_list)),
                 "canceled_orders": canceled_list
-            }, ensure_ascii=False))
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("全部撤单异常")
-            self.write(json.dumps({"status": "error", "message": "撤单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "撤单失败: {}".format(str(e))}, ensure_ascii=True))
 
 
 class CancelByRuleHandler(BaseHandler):
@@ -2180,7 +2520,7 @@ class CancelByRuleHandler(BaseHandler):
             cancel_volume = int(data.get('volume', 0))
             account = data.get('account', 'stock')
             if not stock or cancel_volume <= 0:
-                self.write(json.dumps({"status": "error", "message": "参数错误：必须提供 stock 且 volume > 0"}, ensure_ascii=False))
+                self.write(json.dumps({"status": "error", "message": "参数错误：必须提供 stock 且 volume > 0"}, ensure_ascii=True))
                 return
             orders = safe_call(get_trade_detail_data, self.acc(), account, 'order', 'qmt') or []
             target_orders = []
@@ -2189,7 +2529,7 @@ class CancelByRuleHandler(BaseHandler):
                 if order.m_nVolumeTotal + order.m_nVolumeTraded == cancel_volume and order_code == stock and can_cancel_order(order.m_strOrderSysID, self.acc(), account):
                     target_orders.append(order)
             if not target_orders:
-                self.write(json.dumps({"status": "failed", "message": "未找到符合条件的活跃订单"}, ensure_ascii=False))
+                self.write(json.dumps({"status": "failed", "message": "未找到符合条件的活跃订单"}, ensure_ascii=True))
                 return
             canceled_ids = []
             for t_order in target_orders:
@@ -2199,10 +2539,10 @@ class CancelByRuleHandler(BaseHandler):
                 "status": "success",
                 "message": "匹配到 {} 笔订单并发出撤单请求".format(len(target_orders)),
                 "canceled_sys_ids": canceled_ids
-            }, ensure_ascii=False))
+            }, ensure_ascii=True))
         except Exception as e:
             logger.exception("规则撤单异常")
-            self.write(json.dumps({"status": "error", "message": "撤单失败: {}".format(str(e))}, ensure_ascii=False))
+            self.write(json.dumps({"status": "error", "message": "撤单失败: {}".format(str(e))}, ensure_ascii=True))
 
 # cancel() - 按股票+数量匹配规则撤单
 # sys: Python版本信息
@@ -2219,14 +2559,14 @@ class PythonVersionHandler(BaseHandler):
                 "serial": sys.version_info.serial,
             }
         }
-        self.write(json.dumps(version_info, ensure_ascii=False))
+        self.write(json.dumps(version_info, ensure_ascii=True))
 
 # sys: 关闭HTTP服务
 class ShutdownHandler(BaseHandler):
     def post(self):
         global _http_server
         logger.info("收到关闭请求，服务器即将停止...")
-        self.write(json.dumps({"status": "success", "message": "服务器正在关闭..."}, ensure_ascii=False))
+        self.write(json.dumps({"status": "success", "message": "服务器正在关闭..."}, ensure_ascii=True))
         self.finish()
         if _http_server:
             _http_server.stop()
@@ -2246,7 +2586,444 @@ class DealHandler(BaseHandler):
         rets = []
         for deal in deals:
             rets.append(_extract_attrs(deal))
-        self.write(safe_json_dumps({"deals": rets}, ensure_ascii=False))
+        self.write(safe_json_dumps({"deals": rets}, ensure_ascii=True))
+
+
+# ============= 路由注册 =============
+# ContextInfo.get_commission() - 获取手续费率
+class CommissionHandler(BaseHandler):
+    def post(self):
+        try:
+            ret = safe_call(self.ctx().get_commission)
+            self.write(safe_json_dumps({"commission": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_commission handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.get_slippage() - 获取滑点
+class SlippageHandler(BaseHandler):
+    def post(self):
+        try:
+            ret = safe_call(self.ctx().get_slippage)
+            self.write(safe_json_dumps({"slippage": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_slippage handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.set_commission() - 设置手续费率
+class SetCommissionHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            comtype = data.get('comtype', '')
+            com = data.get('com', 'none')
+            if com == 'none':
+                safe_call(self.ctx().set_commission, 0, comtype)
+            else:
+                safe_call(self.ctx().set_commission, comtype, com)
+            self.write(json.dumps({"status": "success"}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("set_commission handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.set_slippage() - 设置滑点
+class SetSlippageHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            b_flag = data.get('b_flag', '')
+            slippage = data.get('slippage', 'none')
+            if slippage == 'none':
+                safe_call(self.ctx().set_slippage, b_flag)
+            else:
+                safe_call(self.ctx().set_slippage, b_flag, slippage)
+            self.write(json.dumps({"status": "success"}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("set_slippage handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.get_net_value() - 获取净值
+class NetValueHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            barpositon = int(data.get('barpositon', '0'))
+            ret = safe_call(self.ctx().get_net_value, barpositon)
+            self.write(safe_json_dumps({"net_value": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_net_value handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.get_raw_financial_data() - 获取原始财务数据
+class RawFinancialDataHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            fieldList = data.get('fieldList', '')
+            stockList = data.get('stockList', '')
+            startDate = data.get('startDate', '')
+            endDate = data.get('endDate', '')
+            report_type = data.get('report_type', 'report_time')
+            data_type = data.get('data_type', 'dict')
+            fields = [f.strip() for f in fieldList.split(',')] if fieldList else []
+            stocks = [s.strip() for s in stockList.split(',')] if stockList else []
+            ret = safe_call(self.ctx().get_raw_financial_data, fields, stocks, startDate, endDate, report_type, data_type)
+            if ret is None:
+                self.write(json.dumps({"error": "获取原始财务数据失败，API返回None"}, ensure_ascii=True))
+            else:
+                self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_raw_financial_data handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.get_north_finance_change() - 获取北向资金变化
+class NorthFinanceChangeHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            period = data.get('period', '')
+            ret = safe_call(self.ctx().get_north_finance_change, period)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_north_finance_change handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# get_hkt_exchange_rate() - 获取港股通汇率
+class HktExchangeRateHandler(BaseHandler):
+    def post(self):
+        try:
+            func = globals().get('get_hkt_exchange_rate')
+            if func:
+                ret = safe_call(func)
+            else:
+                ret = safe_call(self.ctx().get_hkt_exchange_rate)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_hkt_exchange_rate handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.get_hkt_details() - 获取港股通明细
+class HktDetailsHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            stock_code = data.get('stock_code', '')
+            ret = safe_call(self.ctx().get_hkt_details, stock_code)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_hkt_details handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.get_hkt_statistics() - 获取港股通统计
+class HktStatisticsHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            stock_code = data.get('stock_code', '')
+            ret = safe_call(self.ctx().get_hkt_statistics, stock_code)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_hkt_statistics handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# get_market_time() - 获取市场时间
+class MarketTimeHandler(BaseHandler):
+    def post(self):
+        try:
+            func = globals().get('get_market_time')
+            if func:
+                ret = safe_call(func)
+            else:
+                ret = safe_call(self.ctx().get_market_time)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_market_time handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.get_option_detail_data() - 获取期权详细数据(新接口)
+class OptionDetailDataHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            stockcode = data.get('stockcode', '')
+            ret = safe_call(self.ctx().get_option_detail_data, stockcode)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_option_detail_data handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.load_stk_list() - 加载板块成分股列表
+class LoadStkListHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            dirfile = data.get('dirfile', '')
+            namefile = data.get('namefile', '')
+            ret = safe_call(self.ctx().load_stk_list, dirfile, namefile)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("load_stk_list handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.load_stk_vol_list() - 加载板块成分股成交量列表
+class LoadStkVolListHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            dirfile = data.get('dirfile', '')
+            namefile = data.get('namefile', '')
+            ret = safe_call(self.ctx().load_stk_vol_list, dirfile, namefile)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("load_stk_vol_list handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# ContextInfo.get_ext_all_data() - 已被QMT官方删除
+class ExtAllDataHandler(BaseHandler):
+    def post(self):
+        try:
+            self.write(json.dumps({"error": "get_ext_all_data已被QMT官方删除，请使用ext_data/ext_data_range替代"}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_ext_all_data handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# stoploss_limitprice() - 限价止损
+class StoplossLimitpriceHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            stoplossCode = data.get('stoplossCode', '')
+            orderType = int(data.get('orderType', '0'))
+            opType = int(data.get('opType', '0'))
+            account = data.get('account', self.acc())
+            stockCode = data.get('stockCode', '')
+            stopPrice = float(data.get('stopPrice', '0'))
+            stopAmount = float(data.get('stopAmount', '0'))
+            priceType = int(data.get('priceType', '0'))
+            price = float(data.get('price', '0'))
+            volume = int(data.get('volume', '0'))
+            strategyName = data.get('strategyName', '')
+            quickTrade = int(data.get('quickTrade', '0'))
+            userid = data.get('userid', '')
+            func = globals().get('stoploss_limitprice')
+            if func:
+                ret = safe_call(func, stoplossCode, orderType, opType, account, stockCode,
+                                stopPrice, stopAmount, priceType, price, volume,
+                                strategyName, quickTrade, userid, self.ctx())
+            else:
+                ret = None
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("stoploss_limitprice handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# stoploss_marketprice() - 市价止损
+class StoplossMarketpriceHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            stoplossCode = data.get('stoplossCode', '')
+            orderType = int(data.get('orderType', '0'))
+            opType = int(data.get('opType', '0'))
+            account = data.get('account', self.acc())
+            stockCode = data.get('stockCode', '')
+            triggerPrice = float(data.get('triggerPrice', '0'))
+            stopAmount = float(data.get('stopAmount', '0'))
+            priceType = int(data.get('priceType', '0'))
+            volume = int(data.get('volume', '0'))
+            strategyName = data.get('strategyName', '')
+            quickTrade = int(data.get('quickTrade', '0'))
+            userid = data.get('userid', '')
+            func = globals().get('stoploss_marketprice')
+            if func:
+                ret = safe_call(func, stoplossCode, orderType, opType, account, stockCode,
+                                triggerPrice, stopAmount, priceType, volume,
+                                strategyName, quickTrade, userid, self.ctx())
+            else:
+                ret = None
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("stoploss_marketprice handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# make_option_combination() - 期权组合构建
+class MakeOptionCombinationHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            account = data.get('account', self.acc())
+            optCombList = data.get('optCombList', [])
+            hedgeRatio = data.get('hedgeRatio', '')
+            quickTrade = int(data.get('quickTrade', '0'))
+            userid = data.get('userid', '')
+            func = globals().get('make_option_combination')
+            if func:
+                ret = safe_call(func, account, optCombList, hedgeRatio, quickTrade, userid, self.ctx())
+            else:
+                ret = None
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("make_option_combination handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# release_option_combination() - 期权组合拆解
+class ReleaseOptionCombinationHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            account = data.get('account', self.acc())
+            optCombList = data.get('optCombList', [])
+            quickTrade = int(data.get('quickTrade', '0'))
+            userid = data.get('userid', '')
+            func = globals().get('release_option_combination')
+            if func:
+                ret = safe_call(func, account, optCombList, quickTrade, userid, self.ctx())
+            else:
+                ret = None
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("release_option_combination handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# get_basket() - 获取一篮子股票
+class GetBasketHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            basket_name = data.get('basket_name', '')
+            func = globals().get('get_basket')
+            if func:
+                ret = safe_call(func, basket_name)
+            else:
+                ret = safe_call(self.ctx().get_basket, basket_name)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_basket handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# set_basket() - 设置一篮子股票
+class SetBasketHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            basket_name = data.get('basket_name', '')
+            stock_list = data.get('stock_list', [])
+            func = globals().get('set_basket')
+            if func:
+                ret = safe_call(func, basket_name, stock_list)
+            else:
+                ret = safe_call(self.ctx().set_basket, basket_name, stock_list)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("set_basket handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# call_formula() - 调用公式
+class CallFormulaHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            formula_name = data.get('formula_name', '')
+            params = data.get('params', [])
+            func = globals().get('call_formula')
+            if func:
+                ret = safe_call(func, formula_name, *params)
+            else:
+                ret = safe_call(self.ctx().call_formula, formula_name, *params)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("call_formula handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# get_unclosed_compacts() - 获取未平仓合约
+class UnclosedCompactsHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            account = data.get('account', self.acc())
+            stockCode = data.get('stockCode', '')
+            compactType = data.get('compactType', '')
+            func = globals().get('get_unclosed_compacts')
+            if func:
+                ret = safe_call(func, account, stockCode, compactType)
+            else:
+                ret = safe_call(self.ctx().get_unclosed_compacts, account, stockCode, compactType)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_unclosed_compacts handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# get_closed_compacts() - 获取已平仓合约
+class ClosedCompactsHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            account = data.get('account', self.acc())
+            stockCode = data.get('stockCode', '')
+            compactType = data.get('compactType', '')
+            func = globals().get('get_closed_compacts')
+            if func:
+                ret = safe_call(func, account, stockCode, compactType)
+            else:
+                ret = safe_call(self.ctx().get_closed_compacts, account, stockCode, compactType)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_closed_compacts handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# get_option_subject_position() - 获取期权标的持仓
+class OptionSubjectPositionHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            account = data.get('account', self.acc())
+            optCode = data.get('optCode', '')
+            func = globals().get('get_option_subject_position')
+            if func:
+                ret = safe_call(func, account, optCode)
+            else:
+                ret = safe_call(self.ctx().get_option_subject_position, account, optCode)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_option_subject_position handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# get_comb_option() - 获取期权组合
+class CombOptionHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            account = data.get('account', self.acc())
+            func = globals().get('get_comb_option')
+            if func:
+                ret = safe_call(func, account)
+            else:
+                ret = safe_call(self.ctx().get_comb_option, account)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("get_comb_option handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
+
+# st_status() - 获取ST状态
+class StStatusHandler(BaseHandler):
+    def post(self):
+        try:
+            data = json.loads(self.request.body)
+            stock_code = data.get('stock_code', '')
+            func = globals().get('st_status')
+            if func:
+                ret = safe_call(func, stock_code)
+            else:
+                # 备注说明 get_st_status
+                func2 = globals().get('get_st_status')
+                if func2:
+                    ret = safe_call(func2, stock_code)
+                else:
+                    ret = safe_call(self.ctx().get_his_st_data, stock_code)
+            self.write(safe_json_dumps({"data": ret}, ensure_ascii=True))
+        except Exception as e:
+            logger.exception("st_status handler error")
+            self.write(json.dumps({"error": str(e)}, ensure_ascii=True))
 
 
 # ============= 路由注册 =============
@@ -2403,6 +3180,41 @@ def make_app():
         (r"/api/sector/remove_stock", RemoveStockFromSectorHandler),
 
         # 系统
+        (r"/api/data/commission", CommissionHandler),
+        (r"/api/data/slippage", SlippageHandler),
+        (r"/api/data/net_value", NetValueHandler),
+        (r"/api/data/raw_financial_data", RawFinancialDataHandler),
+        (r"/api/data/north_finance_change", NorthFinanceChangeHandler),
+        (r"/api/data/hkt_exchange_rate", HktExchangeRateHandler),
+        (r"/api/data/hkt_details", HktDetailsHandler),
+        (r"/api/data/hkt_statistics", HktStatisticsHandler),
+        (r"/api/data/market_time", MarketTimeHandler),
+        (r"/api/data/option_detail_data", OptionDetailDataHandler),
+        (r"/api/data/load_stk_list", LoadStkListHandler),
+        (r"/api/data/load_stk_vol_list", LoadStkVolListHandler),
+        (r"/api/data/get_basket", GetBasketHandler),
+        (r"/api/data/set_basket", SetBasketHandler),
+        (r"/api/data/st_status", StStatusHandler),
+
+        # 查询API - ContextInfo属性
+        (r"/api/context/set_commission", SetCommissionHandler),
+        (r"/api/context/set_slippage", SetSlippageHandler),
+
+        # 查询API - 扩展数据
+        (r"/api/ext/ext_all_data", ExtAllDataHandler),
+        (r"/api/ext/call_formula", CallFormulaHandler),
+
+        # 查询API - 交易
+        (r"/api/trade/stoploss_limitprice", StoplossLimitpriceHandler),
+        (r"/api/trade/stoploss_marketprice", StoplossMarketpriceHandler),
+        (r"/api/trade/make_option_combination", MakeOptionCombinationHandler),
+        (r"/api/trade/release_option_combination", ReleaseOptionCombinationHandler),
+        (r"/api/trade/unclosed_compacts", UnclosedCompactsHandler),
+        (r"/api/trade/closed_compacts", ClosedCompactsHandler),
+        (r"/api/data/option_subject_position", OptionSubjectPositionHandler),
+        (r"/api/data/comb_option", CombOptionHandler),
+
+        # ϵͳ
         (r"/api/sys/python_version", PythonVersionHandler),
         (r"/api/sys/shutdown", ShutdownHandler),
 
@@ -2498,6 +3310,13 @@ def init(ContextInfo):
         IOLoop.current().start()
     except Exception as e:
         logger.exception("server start failed: {}".format(e))
+
+
+_handlebar_count = [0]
+
+def handlebar(ContextInfo):
+    """QMT策略handlebar回调 - 非直接交易数据通过查询接口直接用get_full_tick获取"""
+    _handlebar_count[0] += 1
 
 
 def stop(ContextInfo):
