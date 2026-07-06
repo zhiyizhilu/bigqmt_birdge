@@ -467,24 +467,29 @@ client = QMTClient()  # 默认 http://127.0.0.1:8888
 
 # 查询 Python 版本
 print(client.python_version())
-# {"python_version": "3.6.8"}
+# {"python_version": "3.6.8 ...", "python_version_info": {"major": 3, "minor": 6, ...}}
 
-# 查询持仓
+# 查询持仓（返回以股票代码为key的字典）
 holding = client.get_holding("stock")
-print(holding)
+# {"600988.SH": {"StockCode": "600988.SH", "StockName": "赤峰黄金", "Volume": 3000, ...}}
 
 # 查询资金
 print("总资产:", client.get_total_money("stock"))
+# {"total_money": 9988177.97}
 print("可用资金:", client.get_available_money("stock"))
+# {"available_money": 9130915.27}
 ```
 
 ### 行情数据
 
 ```python
-# 获取最新行情
+# 获取最新行情（返回以股票代码为key的字典，无 'data' 包装层）
 tick = client.get_full_tick("600000.SH")
-print(tick)
-# {"600000.SH": {"lastPrice": 8.52, "volume": 12345678, ...}}
+# {"600000.SH": {"lastPrice": 8.52, "lastClose": 8.50, "bidPrice": [8.51, ...], "askPrice": [8.52, ...], ...}}
+
+# 多只股票
+tick = client.get_full_tick("600000.SH,000001.SZ")
+# {"600000.SH": {...}, "000001.SZ": {...}}
 
 # 获取 K 线数据
 kline = client.get_market_data_ex(
@@ -494,6 +499,7 @@ kline = client.get_market_data_ex(
     start_time="20250101",
     end_time="20250630"
 )
+# {"data": {"600000.SH": {"times": [...], "open": [...], ...}, ...}}
 
 # 获取股票名称
 name = client.get_stock_name("600000.SH")
@@ -509,7 +515,7 @@ stocks = client.get_sector("000300.SH")
 ```python
 # 买入（指定价）
 result = client.buy_stock("600000.SH", 8.50, 100, pr_type=11)
-# {"status": "success", "order_ref": "123456"}
+# {"status": "success", "order_ref": "123456", "action": "buy", "stock": "600000.SH", "message": "下单成功"}
 
 # 卖出
 result = client.sell_stock("600000.SH", 8.60, 100, pr_type=11)
@@ -525,8 +531,17 @@ result = client.passorder(
     quickTrade=2     # 2=允许快速交易
 )
 
-# 查询委托
+# 查询委托（返回 {"orders": [...]}）
 orders = client.get_order_status("stock")
+# {"orders": [{"m_strInstrumentID": "600000", "m_nDirection": 48, "m_dLimitPrice": 8.50, "m_strOrderSysID": "8384", ...}]}
+
+# 查询成交（返回 {"deals": [...]}）
+deals = client.get_deal("stock")
+# {"deals": [{"m_strInstrumentID": "600000", "m_dPrice": 8.50, "m_nVolume": 100, "m_strTradeTime": "093005", ...}]}
+
+# 查询持仓（返回 {股票代码: 持仓信息}）
+holding = client.get_holding("stock")
+# {"600000.SH": {"StockCode": "600000.SH", "Volume": 100, "CanUseVolume": 100, "OpenPrice": 8.50, ...}}
 
 # 按 ID 撤单
 client.cancel_order_by_id("123456")
@@ -534,6 +549,8 @@ client.cancel_order_by_id("123456")
 # 一键撤所有
 client.cancel_all_orders("stock")
 ```
+
+> **注意**：委托/成交记录中的 `m_strInstrumentID` **不含交易所后缀**（如 `"600000"` 而非 `"600000.SH"`），需要根据代码前缀自行补全。持仓返回的 `StockCode` 则带后缀。
 
 ### 下单选价类型（prType）
 
@@ -855,3 +872,17 @@ qmt_bridge/
 3. `passorder` 是异步的，等待 1-2 秒后再查询
 4. 检查账户是否有足够资金/持仓
 5. 查看服务端日志中的 `_find_new_order_ref` 诊断信息
+
+### API 返回格式说明
+
+**各 API 的返回格式并不统一**，没有通用的 `{"data": ...}` 包装层。常见格式：
+
+| 类型 | 示例 | 适用 API |
+|------|------|----------|
+| 带语义 key | `{"stockcode": "...", "name": "..."}` | 大部分单值查询（get_stock_name, get_open_date 等） |
+| 股票代码为 key | `{"600000.SH": {lastPrice: 8.52, ...}}` | get_full_tick, get_holding |
+| 列表包装 | `{"orders": [...]}`, `{"deals": [...]}` | get_order_status, get_deal |
+| data 包装 | `{"data": {...}}` | get_market_data_ex, get_market_data, get_local_data |
+| 简单值 | `{"total_money": 9988177.97}` | get_total_money, get_available_money |
+
+具体格式请参考 `qmt_client.py` 中各方法的 docstring。
