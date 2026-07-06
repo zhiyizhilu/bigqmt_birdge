@@ -30,12 +30,8 @@ class QMTClient:
             **kwargs: dict, 传递给 requests.Session.request 的额外参数（如 json=）
 
         返回:
-            dict - 请求结果
-            成功时:
-            {
-                "data": ...,          # 服务端返回的业务数据
-                ...其他业务字段
-            }
+            dict - 请求结果，直接返回服务端 JSON 响应体。
+            不同 API 的返回格式各异（无统一 'data' 包装层），具体见各方法文档。
             请求失败时:
             {
                 "error": "错误描述",    # str, 错误信息
@@ -72,25 +68,27 @@ class QMTClient:
             account: str, 账户类型，默认 'stock'（股票账户）
 
         返回:
-            dict - 持仓列表
+            dict - 以股票代码为key的持仓字典
             {
-                "data": [
-                    {
-                        "m_strInstrumentID": "513090.SH",   # str, 股票代码
-                        "m_strExchangeID": "SH",             # str, 交易所代码
-                        "m_dMarketValue": 1833.0,            # float, 市值
-                        "m_nVolume": 100,                    # int, 持仓数量
-                        "m_dAvgPrice": 18.33,                # float, 成本价
-                        "m_dOpenPrice": 18.33,               # float, 开仓价
-                        "m_dProfit": 0.0,                    # float, 浮动盈亏
-                        "m_dProfitRate": 0.0,                # float, 盈亏比例
-                        "m_nCanUseVolume": 100,              # int, 可用数量
-                        "m_dOnRoadPrice": 0.0,               # float, 在途资金
-                        "m_dYesterdayAmount": 0.0,           # float, 昨日金额
-                        ...其他QMT持仓字段
-                    },
-                    ...
-                ]
+                "513090.SH": {
+                    "StockCode": "513090.SH",           # str, 股票代码（带交易所后缀）
+                    "StockName": "香港证券ETF易方达",     # str, 股票名称
+                    "Direction": 48,                     # int, 方向
+                    "Volume": 100,                       # int, 持仓数量
+                    "OpenPrice": 18.33,                  # float, 开仓价
+                    "FloatProfit": 0.0,                  # float, 浮动盈亏
+                    "MarketValue": 1833.0,               # float, 市值
+                    "StockHolder": "A121871190",         # str, 股东代码
+                    "FrozenVolume": 0,                   # int, 冻结数量
+                    "CanUseVolume": 100,                 # int, 可用数量
+                    "OnRoadVolume": 0,                   # int, 在途数量
+                    "YesterdayVolume": 100,              # int, 昨日数量
+                    "LastPrice": 18.33,                  # float, 最新价
+                    "ProfitRate": 0.0,                   # float, 盈亏比例
+                    "FutureTradeType": 48,               # int, 期货交易类型
+                    "ExpireDate": ""                     # str, 到期日
+                },
+                ...
             }
         """
         return self._req('POST', f'/api/holding', json={"account": account})
@@ -104,16 +102,7 @@ class QMTClient:
         返回:
             dict - 总资金信息
             {
-                "data": {
-                    "m_dBalance": 100000.0,            # float, 总资产
-                    "m_dAvailable": 80000.0,           # float, 可用资金
-                    "m_dMarketValue": 20000.0,         # float, 证券市值
-                    "m_dAssureAsset": 100000.0,        # float, 保证金资产
-                    "m_dInstrumentValue": 20000.0,     # float, 证券价值
-                    "m_dFetchBalance": 80000.0,        # float, 可取资金
-                    "m_dFetchAvailable": 80000.0,      # float, 可取可用
-                    ...其他QMT资金字段
-                }
+                "total_money": 9988177.97          # float, 总资产金额
             }
         """
         return self._req('POST', f'/api/money/total', json={"account": account})
@@ -127,12 +116,7 @@ class QMTClient:
         返回:
             dict - 可用资金信息
             {
-                "data": {
-                    "m_dAvailable": 80000.0,           # float, 可用资金
-                    "m_dFetchBalance": 80000.0,         # float, 可取资金
-                    "m_dFetchAvailable": 80000.0,       # float, 可取可用
-                    ...其他QMT资金字段
-                }
+                "available_money": 9130915.27      # float, 可用资金金额
             }
         """
         return self._req('POST', f'/api/money/available', json={"account": account})
@@ -295,26 +279,29 @@ class QMTClient:
             stocks: str, 股票代码，如 '600000.SH'（多只用逗号分隔）
 
         返回:
-            dict - 全推行情数据
+            dict - 以股票代码为key的行情字典（无 'data' 包装层）
             {
-                "data": {
-                    "600000.SH": {
-                        "m_strCode": "600000.SH",       # str, 股票代码
-                        "m_strName": "浦发银行",         # str, 股票名称
-                        "m_dLastClose": 7.50,            # float, 昨收价
-                        "m_dOpen": 7.52,                 # float, 开盘价
-                        "m_dHigh": 7.60,                 # float, 最高价
-                        "m_dLow": 7.48,                  # float, 最低价
-                        "m_dNow": 7.55,                  # float, 最新价
-                        "m_dVolume": 1000000,            # float, 成交量
-                        "m_dAmount": 7550000.0,          # float, 成交额
-                        "m_dBidPrice1": 7.54,            # float, 买1价
-                        "m_dBidVol1": 500,               # float, 买1量
-                        "m_dAskPrice1": 7.55,            # float, 卖1价
-                        "m_dAskVol1": 300,               # float, 卖1量
-                        ...其他行情字段
-                    }
-                }
+                "600000.SH": {
+                    "time": 1783308600000,            # int, 时间戳(毫秒)
+                    "timetag": "20260706 11:30:00",   # str, 时间标签
+                    "lastPrice": 7.55,                # float, 最新价
+                    "open": 7.52,                     # float, 开盘价
+                    "high": 7.60,                     # float, 最高价
+                    "low": 7.48,                      # float, 最低价
+                    "lastClose": 7.50,                # float, 昨收价
+                    "volume": 1000000,                # float, 成交量
+                    "amount": 7550000.0,              # float, 成交额
+                    "pvolume": 100000000,             # float, 成交量(股)
+                    "stockStatus": 3,                 # int, 股票状态
+                    "openInt": 13,                    # int, 未平仓量
+                    "settlementPrice": 0.0,           # float, 结算价
+                    "lastSettlementPrice": 7.50,      # float, 昨结算价
+                    "bidPrice": [7.54, 7.53, ...],    # list, 买1-5价
+                    "askPrice": [7.55, 7.56, ...],    # list, 卖1-5价
+                    "bidVol": [500, 300, ...],        # list, 买1-5量
+                    "askVol": [300, 200, ...]         # list, 卖1-5量
+                },
+                ...
             }
         """
         return self._req('POST', f'/api/data/full_tick', json={
@@ -382,18 +369,20 @@ class QMTClient:
         返回:
             dict - 委托列表
             {
-                "data": [
+                "orders": [
                     {
-                        "m_strInstrumentID": "600000.SH",    # str, 股票代码
-                        "m_strExchangeID": "SH",              # str, 交易所
-                        "m_nEntrustStatus": 50,               # int, 委托状态（见上方枚举）
-                        "m_nEntrustDirection": 48,            # int, 委托方向
-                        "m_dPrice": 7.55,                     # float, 委托价格
-                        "m_nVolumeTotalOriginal": 100,        # int, 委托数量
-                        "m_dTradedPrice": 7.55,               # float, 成交均价
-                        "m_nVolumeTraded": 100,               # int, 已成交数量
-                        "m_strEntrustTime": "09:30:00",       # str, 委托时间
-                        "m_strOrderRef": "12345",             # str, 委托引用号
+                        "m_strInstrumentID": "600000",         # str, 股票代码（不含交易所后缀）
+                        "m_strExchangeID": "SH",               # str, 交易所
+                        "m_nEntrustStatus": 50,                # int, 委托状态（见上方枚举）
+                        "m_nDirection": 48,                    # int, 委托方向（48=买入, 49=卖出）
+                        "m_eEntrustType": 48,                  # int, 委托类型
+                        "m_dLimitPrice": 7.55,                 # float, 委托限价
+                        "m_nVolumeTotalOriginal": 100,         # int, 委托数量
+                        "m_dTradedPrice": 7.55,                # float, 成交均价
+                        "m_nVolumeTraded": 100,                # int, 已成交数量
+                        "m_dTradeAmount": 75500.0,             # float, 成交金额
+                        "m_strOrderRef": "7692771559857651379",# str, 委托内部引用号（长ID）
+                        "m_strOrderSysID": "8384",             # str, 委托系统编号（短ID，即order_id）
                         ...其他QMT委托字段
                     },
                     ...
@@ -464,10 +453,13 @@ class QMTClient:
         返回:
             dict - Python版本信息
             {
-                "data": {
-                    "version": "3.6.8",                    # str, Python版本号
-                    "executable": "C:\\...",               # str, Python可执行文件路径
-                    ...其他版本信息
+                "python_version": "3.6.8 ...",              # str, 完整Python版本字符串
+                "python_version_info": {
+                    "major": 3,                             # int, 主版本号
+                    "minor": 6,                             # int, 次版本号
+                    "micro": 8,                             # int, 修订号
+                    "releaselevel": "final",                # str, 发布级别
+                    "serial": 0                             # int, 序列号
                 }
             }
         """
@@ -498,7 +490,7 @@ class QMTClient:
         返回:
             dict - K线周期
             {
-                "period": "1d"                             # str, K线周期，如 '1m'/'5m'/'1d'/'1w' 等
+                "period": "tick"                           # str, K线周期，如 'tick'/'1m'/'5m'/'1d'/'1w' 等
             }
         """
         return self._req('GET', '/api/context/period')
@@ -512,7 +504,7 @@ class QMTClient:
         返回:
             dict - Bar位置索引
             {
-                "barpos": 100                              # int, 当前Bar在K线序列中的位置
+                "barpos": 0                                # int, 当前Bar在K线序列中的位置
             }
         """
         return self._req('GET', '/api/context/barpos')
@@ -526,7 +518,7 @@ class QMTClient:
         返回:
             dict - 时间粒度
             {
-                "time_tick_size": 3                        # int, 分笔时间粒度（秒）
+                "time_tick_size": 0                        # int, 分笔时间粒度（秒）
             }
         """
         return self._req('GET', '/api/context/time_tick_size')
@@ -582,7 +574,7 @@ class QMTClient:
         返回:
             dict - 回测标志
             {
-                "do_back_test": False                      # bool, True表示回测模式，False表示实盘/模拟
+                "do_back_test": false                      # bool, true表示回测模式，false表示实盘/模拟
             }
         """
         return self._req('GET', '/api/context/do_back_test')
@@ -596,7 +588,7 @@ class QMTClient:
         返回:
             dict - 基准标的
             {
-                "benchmark": "000300.SH"                   # str, 基准标的代码
+                "benchmark": ""                            # str, 基准标的代码，空字符串表示未设置
             }
         """
         return self._req('GET', '/api/context/benchmark')
@@ -610,7 +602,7 @@ class QMTClient:
         返回:
             dict - 初始资金
             {
-                "capital": 1000000.0                       # float, 初始资金金额
+                "capital": -1.0                            # float, 初始资金金额，-1.0表示未设置
             }
         """
         return self._req('GET', '/api/context/capital')
@@ -624,7 +616,7 @@ class QMTClient:
         返回:
             dict - 股票池
             {
-                "universe": ["600000.SH", "000001.SZ"]     # list[str], 股票池代码列表
+                "universe": []                             # list[str], 股票池代码列表
             }
         """
         return self._req('GET', '/api/context/universe')
@@ -638,7 +630,7 @@ class QMTClient:
         返回:
             dict - 起始时间
             {
-                "start": "20240101"                        # str, 起始时间
+                "start": "-1"                              # str, 起始时间，"-1"表示未设置
             }
         """
         return self._req('GET', '/api/context/start')
@@ -652,7 +644,7 @@ class QMTClient:
         返回:
             dict - 结束时间
             {
-                "end": "20241231"                          # str, 结束时间
+                "end": "-1"                                # str, 结束时间，"-1"表示未设置
             }
         """
         return self._req('GET', '/api/context/end')
@@ -733,7 +725,8 @@ class QMTClient:
         返回:
             dict - 股票名称
             {
-                "data": "浦发银行"                          # str, 股票名称
+                "stockcode": "600988.SH",                   # str, 股票代码
+                "name": "赤峰黄金"                          # str, 股票名称
             }
         """
         return self._req('POST', '/api/data/stock_name', json={"stockcode": stockcode})
@@ -747,7 +740,8 @@ class QMTClient:
         返回:
             dict - 上市日期
             {
-                "data": 19991110                           # int, 上市日期，格式 YYYYMMDD
+                "stockcode": "600988.SH",                   # str, 股票代码
+                "open_date": 0                              # int, 上市日期，0表示无数据
             }
         """
         return self._req('POST', '/api/data/open_date', json={"stockcode": stockcode})
@@ -761,7 +755,8 @@ class QMTClient:
         返回:
             dict - 最新成交量
             {
-                "data": 1000000.0                          # float, 最新成交量
+                "stockcode": "600988.SH",                   # str, 股票代码
+                "last_volume": 1426381496                   # int, 最新成交量
             }
         """
         return self._req('POST', '/api/data/last_volume', json={"stockcode": stockcode})
@@ -789,7 +784,7 @@ class QMTClient:
         返回:
             dict - 分笔时间标签
             {
-                "data": 1704067200000                      # int, 时间标签(毫秒级时间戳)
+                "timetag": 1783321206000                    # int, 时间标签(毫秒级时间戳)
             }
         """
         return self._req('GET', '/api/data/tick_timetag')
@@ -803,9 +798,9 @@ class QMTClient:
         返回:
             dict - 股票列表
             {
-                "data": [
+                "sectorname": "沪深A股",                    # str, 板块名称
+                "stocks": [
                     "600000.SH",                           # str, 股票代码
-                    "600009.SH",
                     ...
                 ]
             }
@@ -822,7 +817,9 @@ class QMTClient:
         返回:
             dict - 权重信息
             {
-                "data": 0.85                               # float, 权重比例(百分比)
+                "indexcode": "000300.SH",                   # str, 指数代码
+                "stockcode": "600988.SH",                   # str, 股票代码
+                "weight": 0.0                               # float, 权重比例
             }
         """
         return self._req('POST', '/api/data/weight_in_index', json={
@@ -838,7 +835,8 @@ class QMTClient:
         返回:
             dict - 合约乘数
             {
-                "data": 300                                 # int, 合约乘数
+                "contractcode": "IF2401.IF",                 # str, 合约代码
+                "multiplier": 1                              # int, 合约乘数
             }
         """
         return self._req('POST', '/api/data/contract_multiplier', json={"contractcode": contractcode})
@@ -852,7 +850,8 @@ class QMTClient:
         返回:
             dict - 无风险利率
             {
-                "data": 0.025                               # float, 无风险利率
+                "index": -1,                                # int, 数据索引
+                "risk_free_rate": 3.5                       # float, 无风险利率
             }
         """
         return self._req('POST', '/api/data/risk_free_rate', json={"index": index})
@@ -866,7 +865,8 @@ class QMTClient:
         返回:
             dict - 日期位置
             {
-                "data": 100                                 # int, 在K线序列中的位置索引
+                "strdate": "20240101",                      # str, 日期字符串
+                "location": 0                               # int, 在K线序列中的位置索引
             }
         """
         return self._req('POST', '/api/data/date_location', json={"strdate": strdate})
@@ -892,7 +892,8 @@ class QMTClient:
                     "000001.SZ": {
                         "close": [12.50, 12.60, ...]        # list[float], 收盘价序列
                     }
-                }
+                },
+                "note": "由get_local_data替代返回"          # str, 说明信息
             }
         """
         return self._req('POST', '/api/data/history_data', json={
@@ -944,10 +945,8 @@ class QMTClient:
         返回:
             dict - 除权除息因子
             {
-                "data": {
-                    "times": [1704067200000, ...],          # list[int], 除权除息日时间戳
-                    "values": [1.0, ...]                    # list[float], 复权因子
-                }
+                "stockcode": "600988.SH",                   # str, 股票代码
+                "factors": {...}                            # dict, 除权除息因子数据
             }
         """
         return self._req('POST', '/api/data/divid_factors', json={"stockcode": stockcode})
@@ -961,7 +960,8 @@ class QMTClient:
         返回:
             dict - 主力合约代码
             {
-                "data": "IF2401.IF"                         # str, 主力合约代码
+                "codemarket": "IF",                         # str, 品种市场代码
+                "main_contract": "IF"                       # str, 主力合约代码
             }
         """
         return self._req('POST', '/api/data/main_contract', json={"codemarket": codemarket})
@@ -976,7 +976,8 @@ class QMTClient:
         返回:
             dict - 日期时间字符串
             {
-                "data": "2024-01-01 09:30:00"               # str, 格式化后的日期时间
+                "timetag": 1704067200000,                   # int, 时间标签(毫秒级时间戳)
+                "datetime": "2024-01-01 08:00:00"           # str, 格式化后的日期时间
             }
         """
         return self._req('POST', '/api/data/timetag_to_datetime', json={
@@ -992,7 +993,8 @@ class QMTClient:
         返回:
             dict - 总股本
             {
-                "data": 29352080000.0                       # float, 总股本（股）
+                "stockcode": "600988.SH",                   # str, 股票代码
+                "total_share": 1426381496                   # int, 总股本（股）
             }
         """
         return self._req('POST', '/api/data/total_share', json={"stockcode": stockcode})
@@ -1010,7 +1012,7 @@ class QMTClient:
         返回:
             dict - 交易日期列表
             {
-                "data": [20240102, 20240103, ...]           # list[int], 交易日期列表，格式YYYYMMDD
+                "dates": [20240102, 20240103, ...]          # list[int], 交易日期列表，格式YYYYMMDD
             }
         """
         return self._req('POST', '/api/data/trading_dates', json={
@@ -1027,7 +1029,8 @@ class QMTClient:
         返回:
             dict - 卖盘量
             {
-                "data": 50000.0                             # float, 卖盘量
+                "stockcode": "600988.SH",                   # str, 股票代码
+                "svol": 96440                               # int, 卖盘量
             }
         """
         return self._req('POST', '/api/data/svol', json={"stockcode": stockcode})
@@ -1057,18 +1060,7 @@ class QMTClient:
         返回:
             dict - 龙虎榜数据
             {
-                "data": [
-                    {
-                        "m_strCode": "600000.SH",           # str, 股票代码
-                        "m_strName": "浦发银行",             # str, 股票名称
-                        "m_strDate": "20240101",             # str, 上榜日期
-                        "m_dBuyAmount": 1000000.0,           # float, 买入金额
-                        "m_dSellAmount": 800000.0,           # float, 卖出金额
-                        "m_dNetAmount": 200000.0,            # float, 净买入金额
-                        ...其他龙虎榜字段
-                    },
-                    ...
-                ]
+                "data": {...}                                # dict, 龙虎榜数据
             }
         """
         return self._req('POST', '/api/data/longhubang', json={
@@ -1088,17 +1080,7 @@ class QMTClient:
         返回:
             dict - 前十大股东数据
             {
-                "data": [
-                    {
-                        "m_strCode": "600000.SH",           # str, 股票代码
-                        "m_strHolderName": "xxx",            # str, 股东名称
-                        "m_nHolderAmount": 1000000,          # int, 持股数量
-                        "m_dHolderRatio": 0.05,              # float, 持股比例
-                        "m_strReportDate": "20240331",       # str, 报告期
-                        ...其他股东字段
-                    },
-                    ...
-                ]
+                "data": {...}                                # dict, 前十大股东数据
             }
         """
         return self._req('POST', '/api/data/top10_share_holder', json={
@@ -1115,15 +1097,8 @@ class QMTClient:
         返回:
             dict - 期权合约详情
             {
-                "data": {
-                    "m_strCode": "10003720.SH",             # str, 期权代码
-                    "m_strName": "50ETF购1月2400",           # str, 期权名称
-                    "m_dStrikePrice": 2.4,                   # float, 行权价
-                    "m_nOptType": 1,                         # int, 期权类型(1:认购/0:认沽)
-                    "m_strEndDate": "20240124",              # str, 到期日
-                    "m_strContractID": "xxx",                # str, 合约标识
-                    ...其他期权字段
-                }
+                "optioncode": "10003720.SH",                # str, 期权合约代码
+                "detail": {...}                              # dict, 期权合约详情
             }
         """
         return self._req('POST', '/api/data/option_detail', json={"optioncode": optioncode})
@@ -1139,12 +1114,8 @@ class QMTClient:
         返回:
             dict - 换手率数据
             {
-                "data": {
-                    "600000.SH": {
-                        "times": [1704067200000, ...],      # list[int], 时间戳列表
-                        "turnover_rate": [0.85, ...]        # list[float], 换手率列表(百分比)
-                    }
-                }
+                "data": {...},                               # dict, 换手率数据
+                "warning": "返回空DataFrame，可能无该时段数据"  # str, 警告信息（无数据时）
             }
         """
         return self._req('POST', '/api/data/turnover_rate', json={
@@ -1161,13 +1132,8 @@ class QMTClient:
         返回:
             dict - ETF基金信息
             {
-                "data": {
-                    "m_strCode": "510050.SH",               # str, ETF代码
-                    "m_strName": "50ETF",                    # str, ETF名称
-                    "m_dNav": 2.5,                           # float, 净值
-                    "m_dNavCu": 2.5,                         # float, 累计净值
-                    ...其他ETF信息字段
-                }
+                "stockcode": "510050.SH",                   # str, ETF代码
+                "info": {...}                                # dict, ETF基金信息
             }
         """
         return self._req('POST', '/api/data/etf_info', json={"stockcode": stockcode})
@@ -1181,7 +1147,8 @@ class QMTClient:
         返回:
             dict - IOPV数据
             {
-                "data": 2.5015                               # float, ETF实时参考净值
+                "stockcode": "510050.SH",                   # str, ETF代码
+                "iopv": 3.05                                 # float, ETF实时参考净值
             }
         """
         return self._req('POST', '/api/data/etf_iopv', json={"stockcode": stockcode})
@@ -1195,16 +1162,8 @@ class QMTClient:
         返回:
             dict - 合约详情
             {
-                "data": {
-                    "m_strInstrumentID": "600000.SH",       # str, 代码
-                    "m_strInstrumentName": "浦发银行",       # str, 名称
-                    "m_strExchangeID": "SH",                 # str, 交易所
-                    "m_nInstrumentStatus": 1,                # int, 状态
-                    "m_dOpenDate": 19991110,                 # float, 上市日期
-                    "m_dVolumeMultiple": 1.0,                # float, 合约乘数
-                    "m_dPriceTick": 0.01,                    # float, 最小变动价位
-                    ...其他合约字段
-                }
+                "stockcode": "600988.SH",                   # str, 标的代码
+                "detail": {...}                              # dict, 合约详情
             }
         """
         return self._req('POST', '/api/data/instrumentdetail', json={"stockcode": stockcode})
@@ -1218,7 +1177,8 @@ class QMTClient:
         返回:
             dict - 到期日
             {
-                "data": 20240119                             # int, 到期日，格式 YYYYMMDD
+                "codemarket": "IF2401.IF",                   # str, 合约代码
+                "expire_date": "0"                           # str, 到期日
             }
         """
         return self._req('POST', '/api/data/contract_expire_date', json={"codemarket": codemarket})
@@ -1232,12 +1192,7 @@ class QMTClient:
         返回:
             dict - 期权标的数据
             {
-                "data": {
-                    "m_strUnderlyingCode": "510050.SH",     # str, 标的代码
-                    "m_dUnderlyingPrice": 2.5,               # float, 标的最新价
-                    "m_dUnderlyingClose": 2.49,              # float, 标的昨收价
-                    ...其他标的数据字段
-                }
+                "data": [...]                                # list, 期权标的数据列表
             }
         """
         return self._req('POST', '/api/data/option_undl_data', json={"undl_code_ref": undl_code_ref})
@@ -1255,17 +1210,9 @@ class QMTClient:
 
         返回:
             dict - 财务数据
+            正常时返回财务数据；当字段格式错误时返回:
             {
-                "data": [
-                    {
-                        "m_strCode": "600000.SH",           # str, 股票代码
-                        "m_strReportDate": "20240331",       # str, 报告期
-                        "ROE": 0.12,                         # float, 净资产收益率
-                        "EPS": 0.85,                         # float, 每股收益
-                        ...请求的财务字段
-                    },
-                    ...
-                ]
+                "error": "获取财务数据失败..."                # str, 错误信息
             }
         """
         return self._req('POST', '/api/data/financial_data', json={
@@ -1286,13 +1233,7 @@ class QMTClient:
         返回:
             dict - 因子数据
             {
-                "data": {
-                    "600000.SH": {
-                        "times": [1704067200000, ...],      # list[int], 时间戳列表
-                        "MA5": [7.55, ...],                 # list[float], MA5因子值
-                        "MA10": [7.50, ...]                 # list[float], MA10因子值
-                    }
-                }
+                "data": null                                # 无数据时返回null
             }
         """
         return self._req('POST', '/api/data/factor_data', json={
@@ -1311,10 +1252,8 @@ class QMTClient:
         返回:
             dict - ST历史数据
             {
-                "data": {
-                    "times": [1704067200000, ...],          # list[int], 时间戳列表
-                    "st_status": [0, ...]                    # list[int], ST状态(0:正常/1:ST/2:*ST)
-                }
+                "stockCode": "600988.SH",                   # str, 股票代码
+                "data": {...}                                # dict, ST历史数据
             }
         """
         return self._req('POST', '/api/data/his_st_data', json={"stockCode": stockCode})
@@ -1328,10 +1267,8 @@ class QMTClient:
         返回:
             dict - 历史指标数据
             {
-                "data": {
-                    "times": [1704067200000, ...],          # list[int], 时间戳列表
-                    "values": [7.55, ...]                   # list[float], 指标值列表
-                }
+                "index": "000300.SH",                       # str, 指标名称
+                "data": {...}                                # dict, 历史指标数据
             }
         """
         return self._req('POST', '/api/data/his_index_data', json={"index": index})
@@ -1345,15 +1282,7 @@ class QMTClient:
         返回:
             dict - 订阅列表
             {
-                "data": [
-                    {
-                        "sub_id": 1,                         # int, 订阅ID
-                        "stock_code": "600000.SH",           # str, 股票代码
-                        "period": "1d",                      # str, K线周期
-                        "dividend_type": "none"              # str, 复权类型
-                    },
-                    ...
-                ]
+                "subscriptions": {...}                       # dict, 订阅信息
             }
         """
         return self._req('GET', '/api/data/all_subscription')
@@ -1370,17 +1299,7 @@ class QMTClient:
         返回:
             dict - 期权合约列表
             {
-                "data": [
-                    {
-                        "m_strCode": "10003720.SH",         # str, 期权代码
-                        "m_strName": "50ETF购1月2400",       # str, 期权名称
-                        "m_dStrikePrice": 2.4,               # float, 行权价
-                        "m_nOptType": 1,                     # int, 期权类型(1:认购/0:认沽)
-                        "m_strEndDate": "20240124",          # str, 到期日
-                        ...其他期权字段
-                    },
-                    ...
-                ]
+                "option_list": [...]                         # list, 期权合约列表
             }
         """
         return self._req('POST', '/api/data/option_list', json={
@@ -1396,16 +1315,8 @@ class QMTClient:
         返回:
             dict - 历史合约列表
             {
-                "data": [
-                    {
-                        "m_strInstrumentID": "IF2401.IF",   # str, 合约代码
-                        "m_strInstrumentName": "沪深2401",   # str, 合约名称
-                        "m_dOpenDate": 20230101,             # float, 上市日期
-                        "m_dExpireDate": 20240119,           # float, 到期日期
-                        ...其他合约字段
-                    },
-                    ...
-                ]
+                "market": "IF",                              # str, 市场代码
+                "contracts": [...]                           # list, 历史合约列表
             }
         """
         return self._req('POST', '/api/data/his_contract_list', json={"market": market})
@@ -1419,7 +1330,8 @@ class QMTClient:
         返回:
             dict - 隐含波动率
             {
-                "data": 0.256                               # float, 隐含波动率
+                "optioncode": "10003720.SH",                # str, 期权合约代码
+                "iv": 0.0                                    # float, 隐含波动率
             }
         """
         return self._req('POST', '/api/data/option_iv', json={"optioncode": optioncode})
@@ -1437,10 +1349,7 @@ class QMTClient:
             dividend: float, 股息率，默认 0
 
         返回:
-            dict - BSM理论价格
-            {
-                "data": 0.1234                               # float, BSM理论价格
-            }
+            dict - BSM理论价格，可能返回500错误
         """
         return self._req('POST', '/api/data/bsm_price', json={
             "optionType": optionType, "objectPrices": objectPrices,
@@ -1463,7 +1372,7 @@ class QMTClient:
         返回:
             dict - 隐含波动率
             {
-                "data": 0.256                               # float, 隐含波动率
+                "iv": 0.0                                   # float, 隐含波动率
             }
         """
         return self._req('POST', '/api/data/bsm_iv', json={
@@ -1486,15 +1395,7 @@ class QMTClient:
         返回:
             dict - 本地K线数据
             {
-                "data": {
-                    "times": [1704067200000, ...],          # list[int], 时间戳列表
-                    "open": [7.52, ...],                    # list[float], 开盘价
-                    "high": [7.60, ...],                    # list[float], 最高价
-                    "low": [7.48, ...],                     # list[float], 最低价
-                    "close": [7.55, ...],                   # list[float], 收盘价
-                    "volume": [1000000, ...],               # list[float], 成交量
-                    "amount": [7550000.0, ...]              # list[float], 成交额
-                }
+                "data": {...}                                # dict, 本地K线数据
             }
         """
         return self._req('POST', '/api/data/local_data', json={
@@ -1513,7 +1414,10 @@ class QMTClient:
         返回:
             dict - 收盘价
             {
-                "data": 7.55                                 # float, 收盘价
+                "stockcode": "600988.SH",                   # str, 股票代码
+                "period": "1d",                              # str, K线周期
+                "timetag": 0,                                # int, 时间标签
+                "close_price": -1.0                          # float, 收盘价
             }
         """
         return self._req('POST', '/api/data/close_price', json={
@@ -1531,7 +1435,10 @@ class QMTClient:
         返回:
             dict - 收盘价
             {
-                "data": 7.55                                 # float, 收盘价
+                "stockcode": "600988.SH",                    # str, 股票代码
+                "period": "1d",                               # str, K线周期
+                "strdate": "20260704",                        # str, 日期字符串
+                "close_price": -1.0                           # float, 收盘价（-1.0表示无数据）
             }
         """
         return self._req('POST', '/api/data/close_price_by_date', json={
@@ -1671,7 +1578,7 @@ class QMTClient:
         返回:
             dict - 是否最后一根Bar
             {
-                "is_last_bar": True                          # bool, True表示当前Bar是最后一根
+                "is_last_bar": false                         # bool, True表示当前Bar是最后一根
             }
         """
         return self._req('GET', '/api/check/is_last_bar')
@@ -1685,7 +1592,7 @@ class QMTClient:
         返回:
             dict - 是否新Bar
             {
-                "is_new_bar": True                           # bool, True表示产生了新Bar
+                "is_new_bar": true                           # bool, True表示产生了新Bar
             }
         """
         return self._req('GET', '/api/check/is_new_bar')
@@ -1699,7 +1606,8 @@ class QMTClient:
         返回:
             dict - 停牌状态
             {
-                "is_suspended": True                         # bool, True表示停牌
+                "stockcode": "600988.SH",                    # str, 股票代码
+                "is_suspended": false                        # bool, True表示停牌
             }
         """
         return self._req('POST', '/api/check/is_suspended_stock', json={"stockcode": stockcode})
@@ -1715,7 +1623,9 @@ class QMTClient:
         返回:
             dict - 是否属于板块
             {
-                "is_sector_stock": True                      # bool, True表示属于该板块
+                "sectorname": "沪深A股",                     # str, 板块名称
+                "stockcode": "600988",                       # str, 股票代码
+                "is_in_sector": 1                            # int, 1表示属于该板块，0表示不属于
             }
         """
         return self._req('POST', '/api/check/is_sector_stock', json={
@@ -1733,7 +1643,9 @@ class QMTClient:
         返回:
             dict - 是否属于指定类型
             {
-                "is_typed_stock": True                       # bool, True表示属于该类型
+                "stocktypenum": 5,                           # int, 股票类型编号
+                "stockcode": "600988",                       # str, 股票代码
+                "result": 0                                  # int, 0表示不属于该类型，非0表示属于
             }
         """
         return self._req('POST', '/api/check/is_typed_stock', json={
@@ -1750,7 +1662,9 @@ class QMTClient:
         返回:
             dict - 行业名称
             {
-                "data": "银行业"                              # str, 行业名称
+                "industryType": 1,                            # int, 行业分类类型
+                "stockcode": "600988.SH",                    # str, 股票代码
+                "industry_name": null                        # str or null, 行业名称（无匹配时为null）
             }
         """
         return self._req('POST', '/api/check/get_industry_name_of_stock', json={
@@ -3555,16 +3469,21 @@ class QMTClient:
         返回:
             dict - 成交列表
             {
-                "data": [
+                "deals": [
                     {
-                        "m_strInstrumentID": "600000.SH",   # str, 股票代码
-                        "m_strExchangeID": "SH",              # str, 交易所
-                        "m_nEntrustDirection": 48,            # int, 委托方向
-                        "m_dTradedPrice": 7.55,               # float, 成交价格
-                        "m_nVolumeTraded": 100,               # int, 成交数量
-                        "m_dTradedAmount": 755.0,             # float, 成交金额
-                        "m_strTradedTime": "09:30:05",        # str, 成交时间
-                        "m_strOrderRef": "12345",             # str, 委托引用号
+                        "m_strInstrumentID": "600000",         # str, 股票代码（不含交易所后缀）
+                        "m_strExchangeID": "SH",               # str, 交易所
+                        "m_nDirection": 48,                    # int, 委托方向（48=买入, 49=卖出）
+                        "m_dPrice": 7.55,                      # float, 成交价格
+                        "m_nVolume": 100,                      # int, 成交数量
+                        "m_dTradeAmount": 755.0,               # float, 成交金额
+                        "m_strTradeTime": "093005",            # str, 成交时间(HHmmss)
+                        "m_strTradeDate": "20260706",          # str, 成交日期
+                        "m_strOrderRef": "7692771559857651379",# str, 委托内部引用号（长ID）
+                        "m_strOrderSysID": "8384",             # str, 委托系统编号（短ID）
+                        "m_strTradeID": "0000000050050384",    # str, 成交编号
+                        "m_dCommission": 0.23,                 # float, 手续费
+                        "m_strInstrumentName": "浦发银行",       # str, 股票名称
                         ...其他成交字段
                     },
                     ...
