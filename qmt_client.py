@@ -121,7 +121,7 @@ class QMTClient:
         """
         return self._req('POST', f'/api/money/available', json={"account": account})
 
-    def buy_stock(self, stock, price, volume, pr_type=11):
+    def buy_stock(self, stock, price, volume, pr_type=11, strategy_name='', reason=''):
         """买入股票
 
         prType(下单选价类型):（特别的对于套利：这个prType只对篮子起作用,期货的采用默认的方式）
@@ -138,7 +138,7 @@ class QMTClient:
         9:买4价(组合不支持)
         10:买5价(组合不支持)
         11:（指定价）模型价（只对单股情况支持,对组合交易不支持）
-        12:涨跌停价
+        12:涨跌涨停价
         13:挂单价
         14:对手价
         18:市价最优价[郑商所][期货]
@@ -166,6 +166,8 @@ class QMTClient:
             price: float, 下单价格
             volume: int, 下单数量（股）
             pr_type: int, 选价类型，默认 11（指定价/模型价）
+            strategy_name: str, 投资备注/策略名称，如 'DDE_Buy'，默认为空
+            reason: str, 下单原因，如 '止盈'，默认为空
 
         返回:
             dict - 下单结果
@@ -191,10 +193,11 @@ class QMTClient:
             }
         """
         return self._req('POST', '/api/order/buy', json={
-            "stock": stock, "price": price, "volume": volume, "prType": pr_type
+            "stock": stock, "price": price, "volume": volume, "prType": pr_type,
+            "strategyName": strategy_name, "reason": reason
         })
 
-    def sell_stock(self, stock, price, volume, pr_type=11):
+    def sell_stock(self, stock, price, volume, pr_type=11, strategy_name='', reason=''):
         """卖出股票
 
         prType(下单选价类型): 同 buy_stock 中的说明
@@ -204,6 +207,8 @@ class QMTClient:
             price: float, 下单价格
             volume: int, 下单数量（股）
             pr_type: int, 选价类型，默认 11（指定价/模型价）
+            strategy_name: str, 投资备注/策略名称，如 'DDE_Sell'，默认为空
+            reason: str, 下单原因，如 '止盈'，默认为空
 
         返回:
             dict - 下单结果
@@ -229,7 +234,8 @@ class QMTClient:
             }
         """
         return self._req('POST', '/api/order/sell', json={
-            "stock": stock, "price": price, "volume": volume, "prType": pr_type
+            "stock": stock, "price": price, "volume": volume, "prType": pr_type,
+            "strategyName": strategy_name, "reason": reason
         })
 
     def get_sector(self, sector):
@@ -1672,7 +1678,7 @@ class QMTClient:
         })
 
     # ============= 交易函数 =============
-    def passorder(self, opType, orderType=1101, stock='', prType=11, price=0, volume=0, quickTrade=2):
+    def passorder(self, opType, orderType=1101, stock='', prType=11, price=0, volume=0, quickTrade=2, strategy_name='qmt', reason=''):
         """通用下单接口(passorder)
 
         参数:
@@ -1705,6 +1711,8 @@ class QMTClient:
                 0: 不使用快速交易
                 1: 快速交易（仅当前Bar）
                 2: 快速交易（合并同方向订单）
+            strategy_name: str, 投资备注/策略名称，如 'qmt'，默认 'qmt'
+            reason: str, 下单原因，如 '止盈'，默认为空
 
         返回:
             dict - 下单结果
@@ -1728,7 +1736,8 @@ class QMTClient:
         """
         return self._req('POST', '/api/trade/passorder', json={
             "opType": opType, "orderType": orderType, "stock": stock,
-            "prType": prType, "price": price, "volume": volume, "quickTrade": quickTrade
+            "prType": prType, "price": price, "volume": volume, "quickTrade": quickTrade,
+            "strategyName": strategy_name, "reason": reason
         })
 
     def algo_passorder(self, opType, orderType=1101, stock='', prType=-1, price=0, volume=0,

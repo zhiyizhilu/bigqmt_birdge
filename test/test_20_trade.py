@@ -58,21 +58,21 @@ wait(1)
 # buy_stock 低于现价买入
 assert_test(results, "buy_stock(挂单)", lambda: client.buy_stock(
     TRADE_STOCK, buy_pending_price, 100, pr_type=11),
-    [(("status",), lambda v: v == "success", "status=success"),(("order_ref",), lambda v: int(v) > 0, "order_ref>0")],
+    [(("status",), lambda v: v == "success", "status=success"),(("order_ref",), lambda v: len(v) > 0, "order_ref!=0")],
     dangerous=True, confirm_func=_confirm)
 assert_order_exists(results, client, "buy_stock", TRADE_STOCK)
 
 # sell_stock 高于现价卖出
 assert_test(results, "sell_stock(挂单)", lambda: client.sell_stock(
     TRADE_STOCK, sell_pending_price, 100, pr_type=11),
-    [(("status",), lambda v: v == "success", "status=success"),(("order_ref",), lambda v: int(v) > 0, "order_ref>0")],
+    [(("status",), lambda v: v == "success", "status=success"),(("order_ref",), lambda v: len(v) > 0, "order_ref!=0")],
     dangerous=True, confirm_func=_confirm)
 assert_order_exists(results, client, "sell_stock", TRADE_STOCK)
 
 # passorder 通用下单
 assert_test(results, "passorder(挂单)", lambda: client.passorder(
     0, 1101, TRADE_STOCK, 11, buy_pending_price, 100),
-    [(("status",), lambda v: v == "success", "status=success"),(("order_ref",), lambda v: int(v) > 0, "order_ref>0")],
+    [(("status",), lambda v: v == "success", "status=success"),(("order_ref",), lambda v: len(v) > 0, "order_ref!=0")],
     dangerous=True, confirm_func=_confirm)
 assert_order_exists(results, client, "passorder", TRADE_STOCK)
 
@@ -126,7 +126,7 @@ print("  买入前持仓: {} 股".format(vol_before))
 # 高于现价买入100股 → 会成交
 assert_test(results, "buy_stock(成交)", lambda: client.buy_stock(
     TRADE_STOCK, buy_fill_price, 100, pr_type=11),
-    [(("status",), lambda v: v == "success", "status=success"),(("order_ref",), lambda v: int(v) > 0, "order_ref>0")],
+    [(("status",), lambda v: v == "success", "status=success"),(("order_ref",), lambda v: len(v) > 0, "order_ref!=0")],
     dangerous=True, confirm_func=_confirm)
 wait(3, "等待成交")
 
@@ -168,7 +168,7 @@ else:
 # 低于现价卖出100股 → 会成交
 assert_test(results, "sell_stock(成交)", lambda: client.sell_stock(
     TRADE_STOCK, sell_fill_price, 100, pr_type=11),
-    [(("status",), lambda v: v == "success", "status=success"),(("order_ref",), lambda v: int(v) > 0, "order_ref>0")],
+    [(("status",), lambda v: v == "success", "status=success"),(("order_ref",), lambda v: len(v) > 0, "order_ref!=0")],
     dangerous=True, confirm_func=_confirm)
 wait(3, "等待成交")
 

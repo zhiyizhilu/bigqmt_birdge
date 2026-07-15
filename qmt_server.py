@@ -301,32 +301,33 @@ class BaseHandler(RequestHandler):
         except Exception:
             return set()
 
-    def _find_new_order_ref(self, stock_code, exclude_ids, max_wait=2):
+    def _find_new_order_ref(self, stock_code, exclude_ids, max_wait=5):
         """排除已知委托ID后，查找新增的委托订单
+        同时检查委托列表和成交记录（委托可能瞬间成交后从委托列表消失）
         返回 (found, order_ref)
         """
         import time as _time
-        _time.sleep(0.3)
+        _time.sleep(0.5)
         for _i in range(int(max_wait / 0.5)):
             try:
+                # 先查委托列表
                 orders = get_trade_detail_data(self.acc(), 'stock', 'order', 'qmt') or []
-                # 按时间倒序查找，最先匹配的最前
+                logger.info("[_find_new_order_ref] 第{}次查询委托列表: {}条".format(_i+1, len(orders)))
                 for order in reversed(orders):
                     ref = getattr(order, 'm_strOrderSysID', '') or ''
                     if not ref:
                         ref = str(getattr(order, 'm_nOrderId', ''))
                     if not ref or str(ref) in exclude_ids:
                         continue
-                    # 找到新委托，检查股票代码是否匹配
                     order_stock = getattr(order, 'm_strInstrumentID', '') or ''
                     order_exchange = getattr(order, 'm_strExchangeID', '') or ''
                     full_code = "{}.{}".format(order_stock, order_exchange) if order_exchange else order_stock
                     if stock_code and full_code and stock_code not in full_code:
                         logger.info("[_find_new_order_ref] 跳过委托代码不匹配: code={}, ref={}".format(full_code, ref))
                         continue
-                    logger.info("[_find_new_order_ref] 找到新增委托: stock={}, ref={}".format(full_code, ref))
+                    logger.info("[_find_new_order_ref] 从委托列表找到: stock={}, ref={}".format(full_code, ref))
                     return True, str(ref)
-                # 检查是否有任何新委托，不管股票代码
+                # 检查是否有任何新委托
                 current_ids = set()
                 for order in orders:
                     ref = getattr(order, 'm_strOrderSysID', '') or ''
@@ -338,12 +339,40 @@ class BaseHandler(RequestHandler):
                 if new_ids:
                     logger.info("[_find_new_order_ref] 发现新委托但股票不匹配, new_ids={}".format(list(new_ids)[:3]))
                     return True, list(new_ids)[0]
+
+                # 委托列表为空或无新委托，检查成交记录（委托可能已瞬间成交）
+                deals = get_trade_detail_data(self.acc(), 'stock', 'deal', 'qmt') or []
+                logger.info("[_find_new_order_ref] 第{}次查询成交记录: {}条".format(_i+1, len(deals)))
+                for deal in reversed(deals):
+                    ref = getattr(deal, 'm_strOrderSysID', '') or ''
+                    if not ref:
+                        ref = str(getattr(deal, 'm_nOrderId', ''))
+                    if not ref or str(ref) in exclude_ids:
+                        continue
+                    deal_stock = getattr(deal, 'm_strInstrumentID', '') or ''
+                    deal_exchange = getattr(deal, 'm_strExchangeID', '') or ''
+                    full_code = "{}.{}".format(deal_stock, deal_exchange) if deal_exchange else deal_stock
+                    if stock_code and full_code and stock_code not in full_code:
+                        continue
+                    logger.info("[_find_new_order_ref] 从成交记录找到: stock={}, ref={}".format(full_code, ref))
+                    return True, str(ref)
+                # 检查成交记录中是否有任何新委托ID
+                deal_ids = set()
+                for deal in deals:
+                    ref = getattr(deal, 'm_strOrderSysID', '') or ''
+                    if not ref:
+                        ref = str(getattr(deal, 'm_nOrderId', ''))
+                    if ref:
+                        deal_ids.add(str(ref))
+                new_deal_ids = deal_ids - exclude_ids
+                if new_deal_ids:
+                    logger.info("[_find_new_order_ref] 成交记录发现新ID但股票不匹配, ids={}".format(list(new_deal_ids)[:3]))
+                    return True, list(new_deal_ids)[0]
             except Exception as e:
                 logger.info("[_find_new_order_ref] 查询异常: {}".format(e))
             _time.sleep(0.5)
+        logger.info("[_find_new_order_ref] 查询超时({}s)，未找到新委托".format(max_wait))
         return False, ""
-
-
 # ============= 1. ContextInfo 属性 =============
 # ContextInfo.period - 获取当前周期
 class ContextPeriodHandler(BaseHandler):
@@ -1566,10 +1595,12 @@ class PassorderHandler(BaseHandler):
             price = float(data['price'])
             volume = int(data['volume'])
             quickTrade = int(data.get('quickTrade', 2))
-            logger.info("[Passorder] opType={}, orderType={}, stock={}, prType={}, price={}, volume={}, quickTrade={}".format(
-                opType, orderType, stock, pr_type, price, volume, quickTrade))
+            strategy_name = data.get('strategyName', 'qmt')
+            reason = data.get('reason', '')
+            logger.info("[Passorder] opType={}, orderType={}, stock={}, prType={}, price={}, volume={}, quickTrade={}, strategyName='{}', reason='{}'".format(
+                opType, orderType, stock, pr_type, price, volume, quickTrade, strategy_name, reason))
             before_ids = self._collect_order_ids()
-            order_ref = passorder(opType, orderType, self.acc(), stock, pr_type, price, volume, 'qmt', quickTrade, self.ctx())
+            order_ref = passorder(opType, orderType, self.acc(), stock, pr_type, price, volume, strategy_name, quickTrade, reason, self.ctx())
             logger.info("[Passorder] 返回: type={}, repr={}".format(
                 type(order_ref).__name__, repr(order_ref)[:200] if order_ref is not None else 'None'))
             ref_str = str(order_ref) if order_ref is not None else ""
@@ -2418,10 +2449,12 @@ class BuyHandler(BaseHandler):
             price = float(data['price'])
             volume = int(data['volume'])
             pr_type = data.get('prType', 11)
+            strategy_name = data.get('strategyName', 'qmt')
+            reason = data.get('reason', '')
             before_ids = self._collect_order_ids()
-            logger.info("[Buy] passorder(23, 1101, {}, {}, {}, {}, {}, 'qmt', 2)".format(
-                self.acc(), stock, pr_type, price, volume))
-            order_ref = passorder(23, 1101, self.acc(), stock, pr_type, price, volume, 'qmt', 2, self.ctx())
+            logger.info("[Buy] passorder(23, 1101, {}, {}, {}, {}, {}, '{}', 2, '{}')".format(
+                self.acc(), stock, pr_type, price, volume, strategy_name, reason))
+            order_ref = passorder(23, 1101, self.acc(), stock, pr_type, price, volume, strategy_name, 2, reason, self.ctx())
             logger.info("[Buy] passorder返回: type={}, repr={}".format(
                 type(order_ref).__name__, repr(order_ref)[:200] if order_ref is not None else 'None'))
             # passorder可能返回None(异步下单)或订单号
@@ -2452,10 +2485,12 @@ class SellHandler(BaseHandler):
             price = float(data['price'])
             volume = int(data['volume'])
             pr_type = data.get('prType', 11)
+            strategy_name = data.get('strategyName', 'qmt')
+            reason = data.get('reason', '')
             before_ids = self._collect_order_ids()
-            logger.info("[Sell] passorder(24, 1101, {}, {}, {}, {}, {}, 'qmt', 2)".format(
-                self.acc(), stock, pr_type, price, volume))
-            order_ref = passorder(24, 1101, self.acc(), stock, pr_type, price, volume, 'qmt', 2, self.ctx())
+            logger.info("[Sell] passorder(24, 1101, {}, {}, {}, {}, {}, '{}', 2, '{}')".format(
+                self.acc(), stock, pr_type, price, volume, strategy_name, reason))
+            order_ref = passorder(24, 1101, self.acc(), stock, pr_type, price, volume, strategy_name, 2, reason, self.ctx())
             logger.info("[Sell] passorder返回: type={}, repr={}".format(
                 type(order_ref).__name__, repr(order_ref)[:200] if order_ref is not None else 'None'))
             ref_str = str(order_ref) if order_ref is not None else ""
