@@ -1596,11 +1596,17 @@ class PassorderHandler(BaseHandler):
             volume = int(data['volume'])
             quickTrade = int(data.get('quickTrade', 2))
             strategy_name = data.get('strategyName', 'qmt') or 'qmt'
-            reason = data.get('reason', '') or 'qmt'
-            logger.info("[Passorder] opType={}, orderType={}, stock={}, prType={}, price={}, volume={}, quickTrade={}, strategyName='{}', reason='{}'".format(
-                opType, orderType, stock, pr_type, price, volume, quickTrade, strategy_name, reason))
+            reason = data.get('reason', '') or ''
+            # passorder 第8参数(strategyName)必须为'qmt'，否则QMT不下单
+            # 将原始 strategy_name 合并到 reason(投资备注) 中
+            combined_reason = '{}_{}'.format(strategy_name, reason) if reason else strategy_name
+            if not combined_reason:
+                combined_reason = 'qmt'
+            combined_reason = combined_reason[:24]  # 投资备注长度限制24
+            logger.info("[Passorder] opType={}, orderType={}, stock={}, prType={}, price={}, volume={}, quickTrade={}, strategyName='qmt', reason='{}'".format(
+                opType, orderType, stock, pr_type, price, volume, quickTrade, combined_reason))
             before_ids = self._collect_order_ids()
-            order_ref = passorder(opType, orderType, self.acc(), stock, pr_type, price, volume, strategy_name, quickTrade, reason, self.ctx())
+            order_ref = passorder(opType, orderType, self.acc(), stock, pr_type, price, volume, 'qmt', quickTrade, combined_reason, self.ctx())
             logger.info("[Passorder] 返回: type={}, repr={}".format(
                 type(order_ref).__name__, repr(order_ref)[:200] if order_ref is not None else 'None'))
             ref_str = str(order_ref) if order_ref is not None else ""
@@ -2449,12 +2455,18 @@ class BuyHandler(BaseHandler):
             price = float(data['price'])
             volume = int(data['volume'])
             pr_type = data.get('prType', 11)
-            strategy_name = data.get('strategyName', 'qmt') or 'qmt'
-            reason = data.get('reason', '') or 'qmt'
+            strategy_name = data.get('strategyName', 'qmt') or 'qmt'  # pyright: ignore[reportAny]
+            reason = data.get('reason', '') or ''
+            # passorder 第8参数(strategyName)必须为'qmt'，否则QMT不下单
+            # 将原始 strategy_name 合并到 reason(投资备注) 中
+            combined_reason = '{}_{}'.format(strategy_name, reason) if reason else strategy_name
+            if not combined_reason:
+                combined_reason = 'qmt'
+            combined_reason = combined_reason[:24]  # 投资备注长度限制24
             before_ids = self._collect_order_ids()
-            logger.info("[Buy] passorder(23, 1101, {}, {}, {}, {}, {}, '{}', 2, '{}')".format(
-                self.acc(), stock, pr_type, price, volume, strategy_name, reason))
-            order_ref = passorder(23, 1101, self.acc(), stock, pr_type, price, volume, strategy_name, 2, reason, self.ctx())
+            logger.info("[Buy] passorder(23, 1101, {}, {}, {}, {}, {}, 'qmt', 2, '{}')".format(
+                self.acc(), stock, pr_type, price, volume, combined_reason))
+            order_ref = passorder(23, 1101, self.acc(), stock, pr_type, price, volume, 'qmt', 2, combined_reason, self.ctx())
             logger.info("[Buy] passorder返回: type={}, repr={}".format(
                 type(order_ref).__name__, repr(order_ref)[:200] if order_ref is not None else 'None'))
             # passorder可能返回None(异步下单)或订单号
@@ -2486,11 +2498,17 @@ class SellHandler(BaseHandler):
             volume = int(data['volume'])
             pr_type = data.get('prType', 11)
             strategy_name = data.get('strategyName', 'qmt') or 'qmt'
-            reason = data.get('reason', '') or 'qmt'
+            reason = data.get('reason', '') or ''
+            # passorder 第8参数(strategyName)必须为'qmt'，否则QMT不下单
+            # 将原始 strategy_name 合并到 reason(投资备注) 中
+            combined_reason = '{}_{}'.format(strategy_name, reason) if reason else strategy_name
+            if not combined_reason:
+                combined_reason = 'qmt'
+            combined_reason = combined_reason[:24]  # 投资备注长度限制24
             before_ids = self._collect_order_ids()
-            logger.info("[Sell] passorder(24, 1101, {}, {}, {}, {}, {}, '{}', 2, '{}')".format(
-                self.acc(), stock, pr_type, price, volume, strategy_name, reason))
-            order_ref = passorder(24, 1101, self.acc(), stock, pr_type, price, volume, strategy_name, 2, reason, self.ctx())
+            logger.info("[Sell] passorder(24, 1101, {}, {}, {}, {}, {}, 'qmt', 2, '{}')".format(
+                self.acc(), stock, pr_type, price, volume, combined_reason))
+            order_ref = passorder(24, 1101, self.acc(), stock, pr_type, price, volume, 'qmt', 2, combined_reason, self.ctx())
             logger.info("[Sell] passorder返回: type={}, repr={}".format(
                 type(order_ref).__name__, repr(order_ref)[:200] if order_ref is not None else 'None'))
             ref_str = str(order_ref) if order_ref is not None else ""
