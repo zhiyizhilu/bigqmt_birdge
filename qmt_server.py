@@ -1595,8 +1595,8 @@ class PassorderHandler(BaseHandler):
             price = float(data['price'])
             volume = int(data['volume'])
             quickTrade = int(data.get('quickTrade', 2))
-            strategy_name = data.get('strategyName', 'qmt')
-            reason = data.get('reason', '')
+            strategy_name = data.get('strategyName', 'qmt') or 'qmt'
+            reason = data.get('reason', '') or 'qmt'
             logger.info("[Passorder] opType={}, orderType={}, stock={}, prType={}, price={}, volume={}, quickTrade={}, strategyName='{}', reason='{}'".format(
                 opType, orderType, stock, pr_type, price, volume, quickTrade, strategy_name, reason))
             before_ids = self._collect_order_ids()
@@ -2449,8 +2449,8 @@ class BuyHandler(BaseHandler):
             price = float(data['price'])
             volume = int(data['volume'])
             pr_type = data.get('prType', 11)
-            strategy_name = data.get('strategyName', 'qmt')
-            reason = data.get('reason', '')
+            strategy_name = data.get('strategyName', 'qmt') or 'qmt'
+            reason = data.get('reason', '') or 'qmt'
             before_ids = self._collect_order_ids()
             logger.info("[Buy] passorder(23, 1101, {}, {}, {}, {}, {}, '{}', 2, '{}')".format(
                 self.acc(), stock, pr_type, price, volume, strategy_name, reason))
@@ -2485,8 +2485,8 @@ class SellHandler(BaseHandler):
             price = float(data['price'])
             volume = int(data['volume'])
             pr_type = data.get('prType', 11)
-            strategy_name = data.get('strategyName', 'qmt')
-            reason = data.get('reason', '')
+            strategy_name = data.get('strategyName', 'qmt') or 'qmt'
+            reason = data.get('reason', '') or 'qmt'
             before_ids = self._collect_order_ids()
             logger.info("[Sell] passorder(24, 1101, {}, {}, {}, {}, {}, '{}', 2, '{}')".format(
                 self.acc(), stock, pr_type, price, volume, strategy_name, reason))
@@ -3318,6 +3318,14 @@ def init(ContextInfo):
         ContextInfo.accountID = ACCOUNT_ID
         if account:
             ContextInfo.accountID = str(account)
+
+        # 设置交易账号（passorder/get_trade_detail_data等交易函数依赖此设置）
+        # 缺少set_account会导致passorder静默返回None、get_trade_detail_data返回空
+        try:
+            ContextInfo.set_account(ContextInfo.accountID)
+            logger.info("已设置交易账号: {}".format(ContextInfo.accountID))
+        except Exception as e:
+            logger.error("set_account失败: {}".format(e))
 
         address = '127.0.0.1'
 
