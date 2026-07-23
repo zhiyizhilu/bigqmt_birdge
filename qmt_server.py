@@ -726,10 +726,13 @@ class MarketDataExHandler(BaseHandler):
         end_time = data.get('end_time', '')
         count = int(data.get('count', '-1'))
         dividend_type = data.get('dividend_type', 'follow')
+        fill_data = data.get('fill_data', True)
+        if isinstance(fill_data, str):
+            fill_data = fill_data.lower() != 'false'
         fields_list = [f.strip() for f in fields.split(',')] if fields else []
         stock_list = [s.strip() for s in stock_code.split(',')] if stock_code else []
         try:
-            ret = self.ctx().get_market_data_ex(fields_list, stock_list, period, start_time, end_time, count, dividend_type)
+            ret = self.ctx().get_market_data_ex(fields_list, stock_list, period, start_time, end_time, count, dividend_type, fill_data)
         except Exception as e:
             logger.error("get_market_data_ex 调用失败: {}".format(e))
             self.write(json.dumps({"error": "获取扩展行情失败: {}".format(str(e))}, ensure_ascii=True))
@@ -1006,6 +1009,9 @@ class OptionUndlDataHandler(BaseHandler):
 # ContextInfo.get_financial_data() - 获取财务数据
 # 批量用法字段格式: 表名.字段名 (如 ASHAREINCOME.net_profit_incl_min_int_inc)
 # 单值用法: get_financial_data(tabname, colname, market, code, report_type, barpos)
+# 重要: 财务数据只能读取【本地已下载】的库。QMT 内置 Python 策略环境【没有】程序化
+#       下载财务数据的 API（如 download_finance_data 不存在），必须先在 QMT 客户端
+#       "数据管理 / 界面端 -> 财务数据" 手动下载到本地后，本接口才能取到值。
 _FINANCIAL_TABLE_MAP = {
     'BALANCE': 'ASHAREBALANCESHEET',
     'INCOME': 'ASHAREINCOME',
@@ -1129,6 +1135,32 @@ class FinancialDataHandler(BaseHandler):
                     except Exception as e2:
                         logger.info("[FinancialData] 方式2(仅表名) 失败: {}".format(e2))
 
+                # 方式3: 若ContextInfo返回全NaN/空，尝试xtdata.get_financial_data（与xtdata下载共用缓存）
+                def _all_nan_or_empty(r):
+                    if r is None:
+                        return True
+                    if hasattr(r, 'empty') and r.empty:
+                        return True
+                    if isinstance(r, dict):
+                        # 嵌套仍有值则视为有效
+                        for v in r.values():
+                            if isinstance(v, dict) and any(x is not None for x in v.values()):
+                                return False
+                        return True
+                    return False
+
+                if _all_nan_or_empty(ret):
+                    try:
+                        import xtdata
+                        if hasattr(xtdata, 'get_financial_data'):
+                            logger.info("[FinancialData] 方式3调用: xtdata.get_financial_data(fields={}, stocks={}, start={}, end={}, rtype={})".format(
+                                resolved_fields, stocks, start_date, end_date, rtype))
+                            ret = xtdata.get_financial_data(resolved_fields, stocks, start_date, end_date, rtype)
+                            logger.info("[FinancialData] 方式3返回: type={}, repr={}".format(
+                                type(ret).__name__, repr(ret)[:800] if ret is not None else 'None'))
+                    except Exception as e3:
+                        logger.info("[FinancialData] 方式3(xtdata) 失败: {}".format(e3))
+
             if ret is None:
                 self.write(json.dumps({"error": "获取财务数据失败，API返回None。正确字段格式: 表名.字段名 (如 ASHAREINCOME.net_profit_incl_min_int_inc)。有效表名: ASHAREBALANCESHEET/ASHAREINCOME/ASHARECASHFLOW/CAPITALSTRUCTURE/PERSHAREINDEX"}, ensure_ascii=True))
             elif hasattr(ret, 'empty') and ret.empty:
@@ -1243,6 +1275,114 @@ class FactorDataHandler(BaseHandler):
         except Exception as e:
             logger.error("[FactorData] 调用失败: {}".format(e))
             self.write(json.dumps({"error": "获取因子数据失败: {}".format(str(e))}, ensure_ascii=True))
+
+# xtdata.get_financial_data() compatible proxy via ContextInfo.
+# xtdata table names -> ASHARE table names; field names are identical
+# (ContextInfo recognizes cash_equivalents etc. directly).
+# ContextInfo.get_financial_data returns a DataFrame indexed by TRADE DATE
+# (NOT report period). The m_timetag column is a millisecond timestamp of the
+# actual report period. We convert it to YYYYMMDD so the consumer's "1231"
+# annual-report filter behaves exactly like xtdata.
+_XT_TO_ASHARE = {
+    'Balance': 'ASHAREBALANCESHEET',
+    'PershareIndex': 'PERSHAREINDEX',
+    'Capital': 'CAPITALSTRUCTURE',
+}
+_TABLE_FIELDS = {
+    'Balance': ['cash_equivalents', 'tradable_fin_assets', 'fin_assets_avail_for_sale',
+                'shortterm_loan', 'bonds_payable', 'long_term_loans'],
+    'PershareIndex': ['du_return_on_equity', 'm_timetag'],
+    'Capital': ['total_capital'],
+}
+
+
+def _ts_to_yyyymmdd(v):
+    """Convert a millisecond timestamp (ContextInfo m_timetag) to 'YYYYMMDD'."""
+    if v is None:
+        return ''
+    try:
+        import datetime as _dt
+        return _dt.datetime.fromtimestamp(float(v) / 1000.0).strftime('%Y%m%d')
+    except Exception:
+        return ''
+
+
+class XtFinancialDataHandler(BaseHandler):
+    def post(self):
+        import math
+        try:
+            data = json.loads(self.request.body)
+            stock_list = [s.strip() for s in data.get('stockList', '').split(',') if s.strip()]
+            table_list = [t.strip() for t in data.get('tableList', '').split(',') if t.strip()]
+            start_time = (data.get('startTime', '') or '').strip()
+            end_time = (data.get('endTime', '') or '').strip()
+            do_download = bool(data.get('download', False))
+            fetch_data = bool(data.get('fetchData', True))
+            if not stock_list or not table_list:
+                self.write(json.dumps({"error": "need args stockList/tableList"}, ensure_ascii=True))
+                return
+            need = {t: _TABLE_FIELDS[t] for t in table_list if t in _TABLE_FIELDS}
+            if not need:
+                self.write(json.dumps({"error": "unsupported financial table, only %s" % list(_TABLE_FIELDS.keys())},
+                                      ensure_ascii=True))
+                return
+            from datetime import datetime, timedelta
+            if not end_time:
+                end_time = datetime.now().strftime('%Y%m%d')
+            if not start_time:
+                start_time = (datetime.now() - timedelta(days=365 * 2)).strftime('%Y%m%d')
+
+            ctx = self.ctx()
+            if do_download:
+                try:
+                    for table, fields in need.items():
+                        asha = _XT_TO_ASHARE[table]
+                        specs = ['%s.%s' % (asha, f) for f in fields]
+                        if hasattr(ctx, 'download_financial_data'):
+                            ctx.download_financial_data(stock_list, specs, start_time, end_time)
+                        elif hasattr(ctx, 'download_financial_data2'):
+                            ctx.download_financial_data2(stock_list, [asha], start_time, end_time)
+                    logger.info("[XtFinancialData] download done: %d stocks tables=%s" % (len(stock_list), table_list))
+                except Exception as de:
+                    logger.info("[XtFinancialData] download failed (use local): %s" % de)
+
+            if not fetch_data:
+                self.write(json.dumps({"status": "success"}, ensure_ascii=True))
+                return
+
+            # Per-stock, per-table fetch (ContextInfo returns trade-date-indexed
+            # DataFrame with columns = field names). Reshape to
+            # {code: {table: {field: [values]}}} so BridgeManager rebuilds the
+            # same {code: {table: DataFrame}} that xtdata produces.
+            out = {code: {} for code in stock_list}
+            for code in stock_list:
+                for table, fields in need.items():
+                    asha = _XT_TO_ASHARE[table]
+                    specs = ['%s.%s' % (asha, f) for f in fields]
+                    try:
+                        df = ctx.get_financial_data(specs, [code], start_time, end_time, 'report_time')
+                        if df is None or (hasattr(df, 'empty') and df.empty):
+                            out[code][table] = {}
+                            continue
+                        rec = {}
+                        for f in fields:
+                            if f in df.columns:
+                                rec[f] = [None if (isinstance(v, float) and math.isnan(v)) else v
+                                          for v in df[f].tolist()]
+                            else:
+                                rec[f] = []
+                        if table == 'PershareIndex' and 'm_timetag' in rec:
+                            rec['m_timetag'] = [_ts_to_yyyymmdd(v) for v in rec['m_timetag']]
+                        out[code][table] = rec
+                    except Exception as e:
+                        out[code][table] = {}
+                        logger.info("[XtFinancialData] fetch %s %s failed: %s" % (code, table, e))
+            json_str = safe_json_dumps({"data": out}, ensure_ascii=True)
+            logger.info("[XtFinancialData] returned %d stocks tables=%s len=%d" % (len(out), table_list, len(json_str)))
+            self.write(json_str)
+        except Exception as e:
+            logger.exception("xt_financial_data handler error")
+            self.write(json.dumps({"error": "get financial data failed: %s" % str(e)}, ensure_ascii=True))
 
 # ContextInfo.get_his_st_data() - 获取历史ST数据
 class HisStDataHandler(BaseHandler):
@@ -3142,6 +3282,7 @@ def make_app():
         (r"/api/data/contract_expire_date", ContractExpireDateHandler),
         (r"/api/data/option_undl_data", OptionUndlDataHandler),
         (r"/api/data/financial_data", FinancialDataHandler),
+        (r"/api/data/xt_financial_data", XtFinancialDataHandler),
         (r"/api/data/factor_data", FactorDataHandler),
         (r"/api/data/his_st_data", HisStDataHandler),
         (r"/api/data/his_index_data", HisIndexDataHandler),

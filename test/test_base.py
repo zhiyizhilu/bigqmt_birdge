@@ -25,7 +25,12 @@ class Tee:
         self.files = files
     def write(self, data):
         for f in self.files:
-            f.write(data)
+            try:
+                f.write(data)
+            except UnicodeEncodeError:
+                # Windows 控制台默认 GBK，不支持 emoji/特殊符号；降级替换避免崩溃
+                enc = getattr(f, "encoding", None) or "utf-8"
+                f.write(data.encode(enc, "replace").decode(enc, "replace"))
             f.flush()
     def flush(self):
         for f in self.files:

@@ -40,8 +40,9 @@ class QMTClient:
             }
         """
         url = "{}{}".format(self.base, path)
+        timeout = kwargs.pop('timeout', 10)
         try:
-            resp = self.session.request(method, url, timeout=10, **kwargs)
+            resp = self.session.request(method, url, timeout=timeout, **kwargs)
             # 强制用utf-8解码，避免Windows下requests默认用ISO-8859-1导致中文乱码
             resp.encoding = 'utf-8'
             try:
@@ -313,7 +314,7 @@ class QMTClient:
         return self._req('POST', f'/api/data/full_tick', json={
             "stocks": stocks})
 
-    def get_market_data_ex(self, stock_code, fields='', period='follow', start_time='', end_time='', count=-1, dividend_type='follow'):
+    def get_market_data_ex(self, stock_code, fields='', period='follow', start_time='', end_time='', count=-1, dividend_type='follow', fill_data=True):
         """获取K线行情数据（扩展版）
 
         参数:
@@ -348,7 +349,7 @@ class QMTClient:
         return self._req('POST', '/api/data/market_data_ex', json={
             "stock_code": stock_str, "fields": fields_str, "period": period,
             "start_time": start_time, "end_time": end_time, "count": count,
-            "dividend_type": dividend_type
+            "dividend_type": dividend_type, "fill_data": fill_data
         })
 
     def get_order_status(self, account='stock'):
@@ -1206,8 +1207,14 @@ class QMTClient:
     def get_financial_data(self, fieldList, stockList, startDate='', endDate='', report_type='announce_time'):
         """获取财务数据
 
+        重要: 财务数据只能读取【本地已下载】的库。QMT 内置 Python 策略环境没有程序化
+              下载财务数据的 API，必须先在 QMT 客户端 "数据管理/界面端 -> 财务数据"
+              手动下载到本地，本接口才能取到值；否则返回的全是 null。
+
         参数:
-            fieldList: str 或 list, 财务字段列表，如 ['ROE', 'EPS'] 或 'ROE,EPS'
+            fieldList: str 或 list, 财务字段列表(格式 表名.字段名)，如
+                       ['ASHAREINCOME.net_profit_incl_min_int_inc', 'ASHAREBALANCESHEET.total_equity']
+                       或 'ASHAREINCOME.net_profit_incl_min_int_inc,ASHAREBALANCESHEET.total_equity'
             stockList: str 或 list, 股票代码列表，如 ['600000.SH'] 或 '600000.SH'
             startDate: str, 开始日期，如 '20230101'，默认为空
             endDate: str, 结束日期，如 '20241231'，默认为空
@@ -1226,6 +1233,32 @@ class QMTClient:
             "stockList": ','.join(stockList) if isinstance(stockList, list) else stockList,
             "startDate": startDate, "endDate": endDate, "report_type": report_type
         })
+
+    def xt_get_financial_data(self, stock_list, table_list, start_time='', end_time='',
+                              download=False, fetch_data=True, timeout=600):
+        """xtdata.get_financial_data 代理（与 miniqmt 完全同源同格式的表级财务数据）
+
+        依赖服务端路由 /api/data/xt_financial_data（需较新版本 qmt_server.py）。
+
+        参数:
+            stock_list: str 或 list, 股票代码列表，如 ['600000.SH']
+            table_list: str 或 list, 财务表名列表，如 ['Balance', 'PershareIndex', 'Capital']
+            start_time: str, 下载起始时间（仅 download=True 时使用）
+            end_time: str, 下载结束时间（仅 download=True 时使用）
+            download: bool, 是否先在服务端增量下载财务数据
+            fetch_data: bool, 是否返回数据（False 时仅下载）
+            timeout: int, 超时秒数（下载/大批量数据耗时较长）
+
+        返回:
+            dict - {"data": {股票代码: {表名: {列名: [值...]}}}}
+            仅下载模式返回 {"status": "success"}；失败返回 {"error": "..."}
+        """
+        return self._req('POST', '/api/data/xt_financial_data', json={
+            "stockList": ','.join(stock_list) if isinstance(stock_list, list) else stock_list,
+            "tableList": ','.join(table_list) if isinstance(table_list, list) else table_list,
+            "startTime": start_time, "endTime": end_time,
+            "download": download, "fetchData": fetch_data
+        }, timeout=timeout)
 
     def get_factor_data(self, fields, stock_code_or_list, start_date='', end_date=''):
         """获取因子数据

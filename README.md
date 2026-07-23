@@ -242,9 +242,16 @@ client = QMTClient(base_url="http://127.0.0.1:8888")
 
 #### 财务数据
 
+> ⚠️ **前置条件（重要）**：QMT 内置 Python 策略环境**没有**程序化下载财务数据的 API
+> （如 `download_finance_data` 不存在，只有行情下载 `download_history_data`）。
+> 财务数据接口只能读取**本地已下载**的财务库。使用前必须先在 QMT 客户端
+> **数据管理 / 界面端 → 财务数据** 手动下载到本地（勾选需要的股票与报表），
+> 否则 `get_financial_data` 等接口返回的全是 `null`。
+> 参考迅投官方文档《行情函数》：财务接口"通过读取下载本地的数据取数，使用前需要补充本地数据"。
+
 | 接口 | 路径 | 说明 |
 |------|------|------|
-| `get_financial_data(fieldList, stockList, ...)` | `/api/data/financial_data` | 获取财务数据 |
+| `get_financial_data(fieldList, stockList, ...)` | `/api/data/financial_data` | 获取财务数据（字段格式：`表名.字段名`） |
 | `get_raw_financial_data(field_list, stock_list, ...)` | `/api/data/raw_financial_data` | 获取原始财务数据 |
 | `get_factor_data(fields, stock_code_or_list, ...)` | `/api/data/factor_data` | 获取因子数据 |
 | `get_longhubang(stock_list, ...)` | `/api/data/longhubang` | 获取龙虎榜数据 |
